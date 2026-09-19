@@ -24,77 +24,82 @@ Blindfold BI solves this by **completely isolating privacy, computation, and nat
 
 ---
 
-## 🛡️ Core Architectural Pillars
+## 🛡️ Core Architectural Pillars: 10-Stage S1–S10 State Machine
 
 ```
                      ┌────────────────────────────────────────────────────────┐
                      │                   EXECUTIVE USER                       │
-                     │          (Natural Language Prompt via UI / MCP)        │
+                     │    (Natural Language Prompt via UI / SSE Stream / MCP) │
                      └──────────────────────────┬─────────────────────────────┘
                                                 │
                                                 ▼
 ┌─────────────────────────────────────────────────────────────────────────────────────────────┐
-│                             8-STAGE BLINDFOLD EXECUTION PIPELINE                            │
+│                       10-STAGE S1-S10 BLINDFOLD STATE MACHINE PIPELINE                      │
 │                                                                                             │
-│  [01. Query Parsing] ──► [02. Contract Resolution] ──► [03. Tool Routing & Execution]       │
-│                                                                     │                       │
-│                                                                     ▼                       │
-│  [05. NVIDIA NIM Llama-3.3-70B] ◄── [04. Blindfold Gateway] ◄── [06. DuckDB Vectorized SQL] │
-│          │                               (Zero PII Scrub)            (100% Deterministic)   │
-│          ▼                                                                                  │
-│  [07. Hallucination Verifier] ──► [08. De-Anonymizer & Receipts] ──► Executive UI & Chart  │
-│        (Tolerance Check)                (Cryptographic Audit)                               │
+│  [S1. Intake & Normalization] ──► [S2. Understand & Ambiguity] ──► [S3. Tool Planning]      │
+│                                                                            │                │
+│                                                                            ▼                │
+│  [S5. DuckDB Engine] ◄── [S4. Blindfold Gateway Inbound] (HMAC Tokens) ◄───┘                │
+│    (Sub-5ms Columnar SQL)                                                                   │
+│         │                                                                                   │
+│         ▼                                                                                   │
+│  [S6. Blindfold Outbound Audit] ──► [S7. NVIDIA NIM Llama-3.3-70B]                          │
+│    (Zero-PII Payload Check)             (Numbers-by-Reference [[F#]] Synthesis)             │
+│                                                    │                                        │
+│                                                    ▼                                        │
+│  [S10. Trust Receipt] ◄── [S9. Server-Side Re-ID] ◄── [S8. Fact Tolerance Verifier]         │
+│    (Zero Hallucination)        (Cryptographic Map)           (Crore/Lakh AST Unit Check)    │
 └─────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 1. Zero PII Leakage Guarantee (Blindfold Gateway)
-The **Blindfold Privacy Gateway** intercepts every prompt payload before any external network boundary is crossed.
-- **Bi-Directional Surrogate Tokenization**: Sensitive client entities (`COMPANY089`), deal codenames (`Naruto`), and personnel initials (`OWNER_001`) are mapped to ephemeral session surrogate tokens:
+### 1. Zero PII Leakage Guarantee (Blindfold Privacy Gateway)
+The **Blindfold Privacy Gateway** (S4 & S6) intercepts every prompt payload and tool result before any external network boundary is crossed.
+- **Bi-Directional Surrogate Tokenization (HMAC-SHA256)**: Sensitive client entities (`COMPANY089`), deal codenames (`Naruto`), and sales reps (`OWNER_REP_01`) are mapped to ephemeral cryptographic surrogate tokens:
   ```
   "What is the status of Naruto deal with COMPANY089?"
-                          │ (Blindfold Gateway)
+                          │ (Blindfold Inbound S4)
                           ▼
   "What is the status of PROJECT_DEAL_095 deal with CLIENT_ENT_088?"
   ```
-- **Local Boundary Isolation**: NVIDIA NIM and cloud models receive *only* sanitized tokens. Once reasoning is complete, the tokens are safely re-hydrated into human-readable names exclusively inside the executive's secure browser session.
+- **Local Boundary Isolation**: NVIDIA NIM and cloud models receive *only* sanitized surrogate tokens. Re-identification occurs strictly server-side post-verification (S9) before rendering to the authenticated user.
 
-### 2. Zero LLM Arithmetic Mandate (DuckDB Engine)
-- **100% Vectorized Columnar SQL**: All sums, weighted probabilities, realization rates, and financial waterfalls are calculated deterministically via **DuckDB** in `<5ms`.
-- **System-Level Constraint**: Prompts explicitly forbid the LLM from performing arithmetic. The LLM acts strictly as an **executive synthesis and strategic commentary engine**.
+### 2. Zero LLM Arithmetic Mandate (DuckDB Vectorized Engine)
+- **100% Vectorized Columnar SQL (S5)**: All sums, weighted probabilities, realization rates, and financial waterfalls are calculated deterministically via **DuckDB** in `<5ms`.
+- **Numbers-by-Reference Protocol**: The LLM is strictly prohibited from performing arithmetic or generating standalone figures. It synthesizes executive commentary referencing pre-computed facts via reference tokens (e.g. `[[F1]]`, `[[F2]]`).
 
-### 3. Metric Contract & Ambiguity Disambiguation
+### 3. Metric Contract & Ambiguity Disambiguation (S2)
 - Declared in `contracts/metric_contract.yaml`, this contract resolves corporate ambiguities before execution:
   - **GST Treatment**: Contracted and Billed amounts are tracked **Excluding GST**; Collections and Receivables are reconciled **Including GST**.
-  - **Realization Rate**: Billed Value (Excl. GST) / Contracted Value (Excl. GST) = **50.99%**.
+  - **Realization Rate**: Billed Value (Excl. GST) / Contracted Value (Excl. GST) = **50.74%** (₹10.74 Cr / ₹21.16 Cr).
   - **Collection Efficiency**: Total Collected (Incl. GST) / Total Invoiced (Incl. GST) = **71.36%**.
-  - **Unbilled Backlog**: Contracted (Excl. GST) - Billed (Excl. GST) = **₹10.32 Cr**.
-- If a query is ambiguous (e.g. *"What is our pipeline?"*), the engine automatically returns **Interactive Clarification Chips** to let the executive choose between *Raw Value (₹68.82 Cr)* vs. *Probability-Weighted (₹26.46 Cr)*.
+  - **Net Receivables**: Billed - Collected = **₹3.63 Cr** (accounting for 11 negative credit note adjustments under DQ009).
+- If a query is polysemous (e.g. *"What is our pipeline?"*), the engine automatically returns **Interactive Clarification Chips** (e.g., *Total Pipeline ₹68.82 Cr* vs. *Weighted Pipeline ₹26.46 Cr* vs. *Non-Tender Pipeline ₹15.62 Cr*).
 
-### 4. Post-Generation Hallucination Verifier & Cryptographic Trust Receipts
-- The **Hallucination Verifier** inspects the LLM's raw text, extracts every numerical token (handling Crore, Lakh, percentage, and integer scales), and mathematically cross-references them against ground-truth outputs from DuckDB.
-- If an ungrounded or fabricated number is detected, an automatic deterministic fallback is triggered.
-- Every chat response is accompanied by an **Immutable Cryptographic Trust Receipt** detailing SQL statements executed, record scan counts, execution duration, and exclusion reasons.
+### 4. Post-Generation Hallucination Verifier (S8) & Trust Receipts (S10)
+- The **Numbers-by-Reference Verifier (S8)** inspects LLM responses, extracts all numerical claims, normalizes Crore/Lakh scales, and verifies them within strict tolerances against DuckDB ground truth. Ungrounded claims are automatically rejected.
+- Every response includes an **Immutable Cryptographic Trust Receipt (S10)** detailing rows scanned, SQL query duration, data snapshot timestamp, and data hygiene exclusion reasons.
 
 ---
 
-## 📊 Ground Truth Financial & Operational Baseline
+## 📊 Ground Truth Financial & Operational Baseline (Section 3.6)
 
-Validated across **342 deals** and **175 work orders**:
+Validated across **332 clean deals** and **176 operational work orders**:
 
 | Metric Area | Ground Truth Metric | Exact Baseline Value | Strategic Significance |
 |---|---|---|---|
 | **Pipeline** | Active Open Pipeline | **₹68,81,52,293.17** (49 deals) | Top-of-funnel commercial opportunity |
+| **Pipeline** | Tender Outlier Share | **77.3%** (₹53.19 Cr) | Major single-deal concentration risk |
+| **Pipeline** | Non-Tender Open Pipeline | **₹15,62,42,293.17** (~₹15.62 Cr) | Core commercial run-rate pipeline |
+| **Pipeline** | Energy Cluster Open Pipeline | **₹3,18,94,034.33** (12 deals) | Renewables + Powerline strategic sector |
 | **Pipeline** | Probability-Weighted Pipeline | **₹26,46,13,014.51** (~₹26.46 Cr) | Expected near-term cash inflow |
-| **Won Deals** | Total Won Deal Bookings | **₹1,05,74,19,002.59** (163 deals) | Historical commercial sales success |
-| **Operations** | Contracted Work Orders | **₹21,06,13,555.12** (175 orders) | Total operational commitments |
+| **Won Deals** | Total Won Deal Bookings | **₹9,49,82,752.00** (153 deals) | Realized commercial sales wins |
+| **Operations** | Contracted Work Orders | **₹21,16,49,409.21** (176 orders) | Operational commitments (excl. GST) |
 | **Revenue** | Billed Revenue (Excl. GST) | **₹10,73,89,776.59** (~₹10.74 Cr) | Current realized revenue |
-| **Revenue** | **Realization Rate** | **50.99%** | Revenue billed vs. work contracted |
-| **Collections**| Cash Collected (Incl. GST) | **₹7,66,34,809.12** (~₹7.66 Cr) | Liquid cash in bank |
-| **Efficiency** | **Collection Efficiency** | **71.36%** | Cash collected against invoiced total |
-| **Receivables**| Outstanding Receivables | **₹3,07,54,967.47** (Excl. GST) | Invoiced revenue awaiting payment |
-| **Backlog** | **Unbilled Backlog** | **₹10,32,23,778.53** (~₹10.32 Cr) | Operational work remaining to bill |
-| **Conversion** | Won Deal to Work Order Conversion | **65.03%** (106 / 163 deals) | Commercial to operational translation |
-| **Data Debt** | Detected Anomalies | **31 items** (29 High, 2 Medium) | 15 completed WOs with ₹0 billed |
+| **Revenue** | **Realization Rate** | **50.74%** | Revenue billed vs. work contracted |
+| **Collections**| Cash Collected (Incl. GST) | **₹9,04,28,187.50** (~₹9.04 Cr) | Cash received in bank |
+| **Receivables**| Net Accounts Receivable | **₹3,62,91,748.87** (~₹3.63 Cr) | Invoiced revenue awaiting payment (DQ009) |
+| **Conversion** | Won Deal to Work Order Conversion | **65.0%** (Linked by Sector) | Commercial-to-operational translation (DQ015) |
+| **Data Debt** | Systematically Audited Anomalies | **DQ001 to DQ016** | 15 completed WOs with ₹0 billed, credit notes |
 
 ---
 

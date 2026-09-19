@@ -57,7 +57,7 @@ def pipeline_summary(
     elif sector_group:
         grp = sector_group.strip().lower()
         if grp in ["energy", "energy_group", "energy cluster"]:
-            conditions.append("sector IN ('Renewables', 'Power', 'Utilities')")
+            conditions.append("sector IN ('Renewables', 'Power', 'Powerline', 'Utilities')")
 
     if exclude_outliers:
         conditions.append("sector != 'Tender'")
