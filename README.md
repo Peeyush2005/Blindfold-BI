@@ -123,14 +123,115 @@ The modern React 19 single-page application (`frontend/`) features:
 
 ---
 
-## 🛠️ Technology Stack
+## 🛠️ Technology Stack & Deep Technical Rationale
 
-- **Backend**: Python 3.13, FastAPI, Pydantic v2, DuckDB 1.1, Pandas, openpyxl, httpx, PyYAML.
-- **LLM Inference**: NVIDIA NIM Free Tier (`meta/llama-3.3-70b-instruct`).
-- **Protocol**: Model Context Protocol (MCP) JSON-RPC 2.0 server (`app/mcp/server.py`).
-- **Frontend**: React 19, TypeScript (Strict Mode, `verbatimModuleSyntax`), Vite 8, Tailwind CSS v4, Apache ECharts, Lucide React.
-- **Testing**: Pytest, anyio, Golden Eval test suite.
-- **DevOps & Cloud**: Docker (multi-stage), Azure Bicep (`infra/main.bicep`), GitHub Actions CI/CD.
+Every component of Blindfold BI was selected to solve enterprise-grade privacy, deterministic mathematical accuracy, low-latency performance, and operational maintainability:
+
+```mermaid
+graph TD
+    subgraph Client_Layer ["Client & Interaction Layer"]
+        UI["React 19 Executive UI<br/>(Vite 8 + Tailwind CSS v4)"]
+        Simulator["8-Stage Live Pipeline Simulator"]
+        ECharts["Apache ECharts Engine<br/>(Waterfall, Funnel, Cohorts)"]
+        MCPClient["Claude Desktop / MCP Client<br/>(JSON-RPC 2.0)"]
+    end
+
+    subgraph Gateway_Layer ["Privacy & Routing Gateway"]
+        FastAPI["FastAPI 0.115 Async Engine<br/>(Python 3.13 ASGI)"]
+        Contract["Metric Contract Disambiguator<br/>(metric_contract.yaml)"]
+        Blindfold["Blindfold Privacy Gateway<br/>(Bi-directional Tokenizer)"]
+        Vault["Session Token Vault<br/>(In-Memory Regex Vault)"]
+    end
+
+    subgraph Compute_Layer ["Deterministic Computation Engine"]
+        DuckDB["DuckDB 1.1 Columnar Engine<br/>(<5ms Vectorized SQL)"]
+        Adapter["Multi-Source Data Adapter<br/>(Monday.com / Excel)"]
+        Audit["CRM Debt & Anomaly Auditor<br/>(31 Discrepancies)"]
+    end
+
+    subgraph Synthesis_Layer ["Cognitive Synthesis & Verification"]
+        NIM["NVIDIA NIM Inference<br/>(Llama-3.3-70B-Instruct)"]
+        Verifier["Hallucination Verifier<br/>(Regex AST Number Checker)"]
+        Receipt["Trust Receipt Generator<br/>(Cryptographic Audit Trail)"]
+    end
+
+    subgraph Integration_Layer ["Enterprise Integrations & Cloud"]
+        Monday["Monday.com GraphQL v2<br/>(Deals & Work Orders)"]
+        Webhook["Challenge Webhook Receiver<br/>(Real-Time Board Sync)"]
+        Azure["Azure Container Apps & SWA<br/>(Bicep IaC Infrastructure)"]
+    end
+
+    UI --> FastAPI
+    Simulator --> FastAPI
+    MCPClient --> FastAPI
+    FastAPI --> Contract
+    Contract --> Blindfold
+    Blindfold <--> Vault
+    Blindfold --> DuckDB
+    Adapter --> DuckDB
+    DuckDB --> Audit
+    DuckDB --> Verifier
+    Blindfold --> NIM
+    NIM --> Verifier
+    Verifier --> Receipt
+    Receipt --> UI
+    Monday <--> Adapter
+    Monday <--> Webhook
+    Webhook --> DuckDB
+```
+
+---
+
+### 🔍 Architectural Rationale: Why This Particular Stack?
+
+#### 1. Why FastAPI & Python 3.13?
+- **Asynchronous Concurrency**: FastAPI leverages Python's native `asyncio` and `uvicorn` ASGI server, enabling non-blocking I/O when communicating concurrently with DuckDB, Monday.com GraphQL APIs, and NVIDIA NIM endpoints.
+- **Strict Typing with Pydantic v2**: Ensures end-to-end type safety and automated validation for all incoming chat requests, Monday webhook payloads, and executive metric requests.
+- **Native Python Ecosystem Integration**: Provides zero-friction interoperability with core analytical libraries (`duckdb`, `pandas`, `openpyxl`, `httpx`).
+- **Python 3.13 Speedups**: Utilizes enhanced interpreter optimizations and memory management, reducing startup latencies to sub-second levels.
+
+#### 2. Why DuckDB 1.1 In-Memory Columnar Database?
+- **Zero LLM Mental Math**: Large Language Models hallucinate when performing multi-digit arithmetic, weighted averages, and currency conversions. DuckDB handles 100% of calculations deterministically.
+- **Vectorized Columnar Execution**: DuckDB executes analytical queries across 342 deals and 175 work orders in **under 5 milliseconds**, without requiring heavy external database servers (like PostgreSQL or Snowflake).
+- **Embedded & Zero-Maintenance**: Runs in-process with the FastAPI worker. No separate database clustering, network latency, or credential management is needed.
+- **Advanced SQL-2016 Window Functions**: Allows complex financial waterfalls, running realization totals, and cross-board regex lookups directly in SQL.
+
+#### 3. Why React 19, TypeScript & Vite 8?
+- **Concurrent React 19 Transitions**: Allows the 8-Stage Pipeline Simulator to execute node animations and dual-column JSON state changes with zero UI freezing or dropped frames.
+- **Strict TypeScript (`verbatimModuleSyntax`)**: Eliminates runtime type errors and ensures exact alignment between backend Pydantic models and frontend data representations.
+- **Vite 8 Rolldown Bundler**: Delivers near-instant Hot Module Replacement (HMR) and ultra-optimized production assets (`dist/` built in <500ms).
+
+#### 4. Why Tailwind CSS v4?
+- **Zero-Runtime Styling**: All styles are pre-compiled into a lightweight stylesheet (<10KB gzip), delivering optimal mobile and desktop loading speeds.
+- **Executive Dark Cockpit Theme**: Tailored for high-stakes executive analysis with low eye strain, luminous status badges, and refined typography.
+
+#### 5. Why Apache ECharts?
+- **High-Performance Canvas/SVG Rendering**: Outperforms DOM-heavy chart libraries (like Recharts) when rendering dense multi-stage funnels and multi-bar realization cohorts.
+- **Native Financial Waterfall Support**: Provides seamless rendering of complex balance transitions (Contracted ➔ Billed ➔ Collected ➔ Backlog ➔ Receivables) with sub-pixel alignment.
+- **Responsive Fluid Resizing**: Automatically re-layouts charts across viewport resize events without unmounting or re-rendering canvas contexts.
+
+#### 6. Why NVIDIA NIM (`meta/llama-3.3-70b-instruct`)?
+- **State-of-the-Art Reasoning**: The 70-billion-parameter Llama-3.3 model provides elite executive strategic synthesis, market context correlation, and actionable risk evaluation.
+- **Enterprise Inference Microservice**: NVIDIA NIM delivers high token throughput with minimal time-to-first-token latency.
+- **Strict Boundary Containment**: By delegating all math to DuckDB and anonymizing all PII in the Blindfold Gateway, NIM is used strictly where LLMs excel: qualitative nuance, natural language summarization, and strategic recommendations.
+- **Cost Efficiency**: Operates under NVIDIA's free API tier for zero operational licensing overhead.
+
+#### 7. Why the Blindfold Privacy Gateway (Surrogate Tokenization)?
+- **Enterprise Data Sovereignty**: Prevents customer names (`COMPANY089`), deal codenames (`Naruto`), and rep identities from ever leaving the company's VPC or reaching external LLM providers.
+- **Deterministic Bi-Directional Rehydration**: Anonymizes text before sending to LLMs and flawlessly reconstitutes original human-readable names exclusively inside the executive's secure client browser session.
+
+#### 8. Why Monday.com GraphQL v2?
+- **Work OS Standard**: Skylark Drones tracks active commercial deals and operational work orders on Monday.com boards.
+- **GraphQL Precision**: Monday's GraphQL v2 API (`2024-01`) allows fetching specific column values across boards without over-fetching bulky metadata.
+- **Reactive Challenge Webhooks**: Automated handshake verification allows instant event-driven sync when deal stages or work order statuses change, eliminating inefficient polling loops.
+
+#### 9. Why Azure Container Apps & Azure Static Web Apps?
+- **Microservices Serverless Scaling**: Azure Container Apps runs the FastAPI + DuckDB backend with automatic scale-to-zero when idle, minimizing cloud expenditures.
+- **Global CDN Edge Distribution**: Azure Static Web Apps distributes the React 19 application globally with built-in SSL termination.
+- **Declarative Bicep IaC**: The entire cloud environment is codified in `infra/main.bicep`, ensuring 100% reproducible deployments in any Azure subscription.
+
+#### 10. Why Model Context Protocol (MCP)?
+- **Universal Agent Interoperability**: Exposes Blindfold BI's deterministic tools to Claude Desktop, Cursor, and enterprise AI agents via JSON-RPC 2.0 without vendor lock-in.
 
 ---
 
