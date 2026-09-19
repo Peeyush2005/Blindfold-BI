@@ -1,5 +1,6 @@
 import logging
 import json
+import re
 from typing import Dict, Any, List, Optional, Tuple
 import httpx
 import pandas as pd
@@ -10,7 +11,8 @@ logger = logging.getLogger(__name__)
 class MondayClient:
     """
     Monday.com GraphQL API v2 Client for Blindfold BI.
-    Handles board querying, column mapping, webhook events, and two-way status updates.
+    Enforces strict read-only querying, board querying, column mapping, and audit alert generation.
+    Mutations are strictly prohibited by architecture contract.
     """
 
     def __init__(self, api_token: Optional[str] = None, api_url: Optional[str] = None):
@@ -31,7 +33,10 @@ class MondayClient:
         }
 
     async def execute_query(self, query: str, variables: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """Execute a GraphQL query against Monday.com API."""
+        """Execute a read-only GraphQL query against Monday.com API. Mutations are blocked."""
+        if re.search(r"\bmutation\b", query, re.IGNORECASE):
+            raise ValueError("Mutation forbidden: Monday client is strictly read-only")
+
         if not self.is_configured:
             return {"error": "Monday.com API token not configured"}
 
@@ -140,25 +145,10 @@ class MondayClient:
 
         return all_items
 
-    async def post_item_update(self, item_id: str, body: str) -> bool:
-        """Create an update (comment / alert) on a Monday.com item."""
-        if not self.is_configured or not item_id:
-            return False
-
-        mutation = """
-        mutation ($itemId: ID!, $body: String!) {
-            create_update(item_id: $itemId, body: $body) {
-                id
-            }
-        }
-        """
-        result = await self.execute_query(mutation, {"itemId": str(item_id), "body": body})
-        return "error" not in result and bool(result.get("create_update", {}).get("id"))
-
     async def push_data_debt_alerts(self, anomalies: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
-        Push actionable data debt alerts to Monday.com items.
-        If live item ID is present, posts an update; otherwise simulates in test mode.
+        Audit and prepare actionable data debt alerts for Monday.com items.
+        Maintains read-only safety by logging audit entries without performing live board mutations.
         """
         success_count = 0
         skipped_count = 0
@@ -185,18 +175,9 @@ class MondayClient:
                 f"*Audited automatically by Skylark Blindfold BI Engine.*"
             )
 
-            # If connected and Monday item ID exists (usually integer string in Monday)
-            if self.is_configured and entity_id.isdigit():
-                posted = await self.post_item_update(entity_id, body)
-                if posted:
-                    success_count += 1
-                    details.append({"id": entity_id, "status": "posted"})
-                else:
-                    details.append({"id": entity_id, "status": "failed"})
-            else:
-                # Recorded in log / simulated
-                success_count += 1
-                details.append({"id": entity_id, "status": "simulated_success", "preview": body[:80]})
+            # Record audited alert without mutating upstream board
+            success_count += 1
+            details.append({"id": entity_id, "status": "audited", "preview": body[:80]})
 
         return {
             "total_anomalies": len(anomalies),

@@ -41,7 +41,7 @@ def test_golden_conversion_metrics():
     assert conv["pending_wo_creation_count"] == 57
     assert abs(conv["conversion_rate_pct"] - 65.03) < 0.05
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_zero_pii_leakage_in_chat_orchestration():
     query = "What is the status of Naruto deal with COMPANY089?"
     res = await orchestrator.execute_query(query)
