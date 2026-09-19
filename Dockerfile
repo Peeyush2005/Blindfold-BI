@@ -1,5 +1,5 @@
 # Multi-stage Dockerfile for Blindfold BI Backend API
-FROM python:3.13-slim as builder
+FROM python:3.13-slim AS builder
 
 WORKDIR /app
 
@@ -27,9 +27,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy installed wheels/packages from builder
 COPY --from=builder /install /usr/local
 
-# Copy datasets and metric contracts
-COPY "Deal funnel Data.xlsx" /app/
-COPY "Work_Order_Tracker Data.xlsx" /app/
+# Copy datasets and metric contracts (JSON array syntax for filenames with spaces)
+COPY ["Deal funnel Data.xlsx", "/app/"]
+COPY ["Work_Order_Tracker Data.xlsx", "/app/"]
 COPY contracts/ /app/contracts/
 COPY pytest.ini /app/
 
