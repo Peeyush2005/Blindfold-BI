@@ -46,14 +46,18 @@ def pipeline_summary(
         conditions.append(period_res.sql_filter)
 
     # Sector or Sector Group filter
+    if sector and sector.strip().lower() in ["energy", "energy_group", "energy cluster"]:
+        sector_group = "energy"
+        sector = None
+
     if sector:
         canonical_sec = contract_manager.resolve_sector_alias(sector)
         conditions.append("LOWER(sector) = LOWER(?)")
         params.append(canonical_sec)
     elif sector_group:
         grp = sector_group.strip().lower()
-        if grp in ["energy", "energy_group"]:
-            conditions.append("sector IN ('Renewables', 'Powerline', 'Utilities')")
+        if grp in ["energy", "energy_group", "energy cluster"]:
+            conditions.append("sector IN ('Renewables', 'Power', 'Utilities')")
 
     if exclude_outliers:
         conditions.append("sector != 'Tender'")

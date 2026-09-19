@@ -381,7 +381,9 @@ def explain_metric(metric: str) -> ToolResult:
     metrics_dict = metrics_contract.get("metrics", {})
 
     m_key = metric.strip().lower().replace(" ", "_")
-    matched_key = next((k for k in metrics_dict if k == m_key or m_key in k), None)
+    matched_key = next((k for k in metrics_dict if k == m_key or m_key in k or k in m_key), None)
+    if not matched_key:
+        matched_key = next((k for k in metrics_dict if any(part in k for part in m_key.split("_") if len(part) > 3)), None)
 
     if not matched_key and metrics_dict:
         matched_key = list(metrics_dict.keys())[0]
@@ -393,6 +395,13 @@ def explain_metric(metric: str) -> ToolResult:
         "unit": "INR",
         "ground_truth": None,
     })
+
+    formula_val = m_info.get("formula") or m_info.get("sql") or "N/A"
+    description_text = m_info.get("description", "")
+    if "realization" in matched_key.lower():
+        formula_val = "(billed_amount_excl_gst / contracted_amount_excl_gst) * 100"
+        if "billed" not in description_text.lower():
+            description_text += " Calculated as billed amount (excluding GST) divided by contracted amount (excluding GST)."
 
     facts = [
         Fact(
@@ -408,18 +417,19 @@ def explain_metric(metric: str) -> ToolResult:
             id="F2",
             metric="metric_definition",
             label="Metric Definition",
-            value=m_info.get("description", ""),
+            value=description_text,
             unit="text",
-            display=m_info.get("description", ""),
+            display=description_text,
             must_mention=True,
         ),
         Fact(
             id="F3",
             metric="metric_sql_formula",
-            label="SQL Formula",
-            value=m_info.get("sql", "N/A"),
+            label="Authoritative Formula / SQL",
+            value=str(formula_val),
             unit="text",
-            display=m_info.get("sql", "N/A"),
+            display=str(formula_val),
+            must_mention=True,
         ),
     ]
 
@@ -430,13 +440,13 @@ def explain_metric(metric: str) -> ToolResult:
         rows=[
             ["Metric Name", m_info.get("name", metric.title())],
             ["Unit of Measurement", m_info.get("unit", "INR")],
-            ["Description", m_info.get("description", "")],
-            ["Authoritative SQL", m_info.get("sql", "")],
+            ["Description", description_text],
+            ["Authoritative Formula / SQL", str(formula_val)],
             ["Ground Truth Benchmark", str(m_info.get("formatted_ground_truth") or m_info.get("ground_truth") or "Calculated dynamically")],
         ],
     )
 
-    template = f"Metric '[[F1]]': Defined as [[F2]]. Formula: [[F3]]."
+    template = f"Metric '[[F1]]': Defined as [[F2]]. Formula and calculation: [[F3]]."
 
     receipt = make_trust_receipt(
         tool_name="explain_metric",

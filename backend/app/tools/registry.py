@@ -254,7 +254,16 @@ class ToolRegistry:
 
         tool_def = self._tools[name]
         call_args = args or {}
-        return tool_def.func(**call_args)
+
+        # Filter call_args to match the function's signature
+        sig = inspect.signature(tool_def.func)
+        has_varkw = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+        if not has_varkw:
+            filtered_args = {k: v for k, v in call_args.items() if k in sig.parameters}
+        else:
+            filtered_args = call_args
+
+        return tool_def.func(**filtered_args)
 
     @property
     def mcp_server(self):

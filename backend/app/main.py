@@ -16,6 +16,7 @@ from app.tools.revenue_tools import get_revenue_realization_summary
 from app.tools.operations_tools import get_work_order_health, get_cross_board_conversion, get_data_debt_report
 from app.tools.executive_tools import get_executive_brief
 from app.api.monday_routes import router as monday_router
+from app.api.chat import router as chat_router
 from app.tools.registry import tools_router, registry
 
 @asynccontextmanager
@@ -44,6 +45,7 @@ app.add_middleware(
 
 app.include_router(monday_router)
 app.include_router(tools_router)
+app.include_router(chat_router)
 
 if registry.mcp_server is not None:
     app.mount("/mcp", registry.mcp_server.sse_app())
@@ -66,14 +68,6 @@ def health():
             "connected": bool(settings.NVIDIA_API_KEY)
         }
     }
-
-@app.post("/api/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest):
-    if not request.message.strip():
-        raise HTTPException(status_code=400, detail="Query message cannot be empty")
-
-    response = await orchestrator.execute_query(request.message, session_id=request.session_id or "default")
-    return response
 
 @app.get("/api/dashboard", response_model=DashboardOverview)
 def get_dashboard():

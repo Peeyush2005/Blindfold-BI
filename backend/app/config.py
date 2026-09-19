@@ -3,7 +3,14 @@ from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=[
+            Path(__file__).resolve().parent.parent.parent / ".env",
+            Path(__file__).resolve().parent.parent / ".env",
+            ".env",
+        ],
+        extra="ignore",
+    )
 
     # App Settings
     APP_NAME: str = "Blindfold BI - Skylark Drones"
@@ -19,7 +26,7 @@ class Settings(BaseSettings):
     # LLM Settings (NVIDIA NIM Free Tier)
     NVIDIA_API_KEY: str = os.getenv("NVIDIA_API_KEY", "")
     NVIDIA_BASE_URL: str = os.getenv("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1")
-    NVIDIA_MODEL: str = os.getenv("NVIDIA_MODEL", "meta/llama-3.3-70b-instruct")
+    NVIDIA_MODEL: str = os.getenv("NVIDIA_MODEL", "meta/llama-3.2-11b-vision-instruct")
 
     # Monday.com API Settings (Optional live connector)
     MONDAY_API_TOKEN: str = os.getenv("MONDAY_API_TOKEN", "")

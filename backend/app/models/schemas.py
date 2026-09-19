@@ -38,6 +38,11 @@ class ChatResponse(BaseModel):
     suggestion_chips: List[SuggestionChip] = Field(default_factory=list)
     pipeline_trace: List[PipelineStepEvent] = Field(default_factory=list)
     chart_data: Optional[Dict[str, Any]] = None
+    facts: Optional[List[Dict[str, Any]]] = None
+    tables: Optional[List[Dict[str, Any]]] = None
+    charts: Optional[List[Dict[str, Any]]] = None
+    dq_warnings: Optional[List[Dict[str, Any]]] = None
+    tool_result: Optional[Dict[str, Any]] = None
 
 class DashboardOverview(BaseModel):
     pipeline_value: float
