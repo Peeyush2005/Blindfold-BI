@@ -13,8 +13,13 @@ htmlcov/
 
 # Environment variables & secrets
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
+*.pem
+*.key
+*.cert
+*credential*
+*.publishsettings
 
 # Node & Frontend dependencies and builds
 node_modules/
