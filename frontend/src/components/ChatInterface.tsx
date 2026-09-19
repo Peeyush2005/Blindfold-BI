@@ -73,34 +73,131 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     setInputQuery('');
     setIsLoading(true);
     setTracingQuery(text);
+    setLatestPipelineSteps([]); // Reset steps for live state machine simulation
+
+    const sessionId = `skylark-session-${Date.now()}`;
 
     try {
-      const res = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: text,
-          session_id: 'skylark-exec-session'
-        }),
-      });
+      // 1. Attempt real-time SSE streaming endpoint
+      let streamedSuccess = false;
+      try {
+        const streamRes = await fetch('/api/chat/stream', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'text/event-stream',
+          },
+          body: JSON.stringify({
+            message: text,
+            session_id: sessionId,
+          }),
+        });
 
-      if (!res.ok) {
-        throw new Error(`HTTP Error: ${res.status}`);
+        if (streamRes.ok && streamRes.body && streamRes.headers.get('content-type')?.includes('text/event-stream')) {
+          const reader = streamRes.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = '';
+          let completedResponse: ChatResponse | null = null;
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+
+            const blocks = buffer.split('\n\n');
+            buffer = blocks.pop() || '';
+
+            for (const block of blocks) {
+              if (!block.trim()) continue;
+              const lines = block.split('\n');
+              let eventType = 'message';
+              let dataStr = '';
+
+              for (const line of lines) {
+                if (line.startsWith('event: ')) {
+                  eventType = line.slice(7).trim();
+                } else if (line.startsWith('data: ')) {
+                  dataStr = line.slice(6).trim();
+                }
+              }
+
+              if (!dataStr) continue;
+
+              try {
+                if (eventType === 'step') {
+                  const stepPayload = JSON.parse(dataStr);
+                  const stepNum = parseInt(stepPayload.step_id?.replace(/\D/g, '') || '0') || 1;
+                  const stepEvent: PipelineStepEvent = {
+                    step_number: stepNum,
+                    step_name: stepPayload.step_name || `S${stepNum}`,
+                    status: stepPayload.status === 'completed' ? 'success' : (stepPayload.status || 'success'),
+                    duration_ms: stepPayload.duration_ms || 0,
+                    summary: stepPayload.summary || '',
+                    input_payload: stepPayload.details?.input || stepPayload.details || {},
+                    output_payload: stepPayload.details?.output || stepPayload.details || {},
+                  };
+
+                  setLatestPipelineSteps((prev) => {
+                    const existing = prev.filter((s) => s.step_number !== stepNum);
+                    return [...existing, stepEvent].sort((a, b) => a.step_number - b.step_number);
+                  });
+                } else if (eventType === 'complete') {
+                  completedResponse = JSON.parse(dataStr) as ChatResponse;
+                }
+              } catch (parseErr) {
+                console.warn('Error parsing SSE event payload:', parseErr);
+              }
+            }
+          }
+
+          if (completedResponse) {
+            streamedSuccess = true;
+            const assistantMsg: ChatMessage = {
+              id: `assistant-${Date.now()}`,
+              sender: 'assistant',
+              text: completedResponse.answer,
+              timestamp: new Date().toLocaleTimeString(),
+              response: completedResponse,
+            };
+            setMessages((prev) => [...prev, assistantMsg]);
+            if (completedResponse.pipeline_trace && completedResponse.pipeline_trace.length > 0) {
+              setLatestPipelineSteps(completedResponse.pipeline_trace);
+            }
+          }
+        }
+      } catch (streamErr) {
+        console.warn('Streaming fetch failed, falling back to standard POST:', streamErr);
       }
 
-      const data: ChatResponse = await res.json();
+      // 2. Fallback to standard POST /api/chat if streaming was not successful
+      if (!streamedSuccess) {
+        const res = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            message: text,
+            session_id: sessionId,
+          }),
+        });
 
-      const assistantMsg: ChatMessage = {
-        id: `assistant-${Date.now()}`,
-        sender: 'assistant',
-        text: data.answer,
-        timestamp: new Date().toLocaleTimeString(),
-        response: data,
-      };
+        if (!res.ok) {
+          throw new Error(`HTTP Error: ${res.status}`);
+        }
 
-      setMessages((prev) => [...prev, assistantMsg]);
-      if (data.pipeline_trace && data.pipeline_trace.length > 0) {
-        setLatestPipelineSteps(data.pipeline_trace);
+        const data: ChatResponse = await res.json();
+
+        const assistantMsg: ChatMessage = {
+          id: `assistant-${Date.now()}`,
+          sender: 'assistant',
+          text: data.answer,
+          timestamp: new Date().toLocaleTimeString(),
+          response: data,
+        };
+
+        setMessages((prev) => [...prev, assistantMsg]);
+        if (data.pipeline_trace && data.pipeline_trace.length > 0) {
+          setLatestPipelineSteps(data.pipeline_trace);
+        }
       }
     } catch (err: any) {
       const errorMsg: ChatMessage = {
@@ -311,10 +408,10 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
               <div className="bg-slate-950 border border-slate-800 rounded-2xl p-4 shadow-xl text-slate-300 space-y-2">
                 <div className="flex items-center space-x-2 text-xs font-mono text-cyan-400">
                   <span className="h-2 w-2 rounded-full bg-cyan-400 animate-ping" />
-                  <span>Executing 8-Stage Blindfold Verification Pipeline...</span>
+                  <span>Executing 10-Stage S1-S10 Blindfold Verification Pipeline...</span>
                 </div>
                 <p className="text-xs text-slate-500 m-0">
-                  De-identifying PII → Running DuckDB SQL → NVIDIA NIM Llama-3.3-70B → Hallucination Verifier Audit
+                  Intake → Ambiguity Analysis → Tool Planning → Inbound HMAC Tokenization → DuckDB SQL → Outbound Audit → NVIDIA NIM Llama-3.3-70B → Fact Verification → Server-Side Re-identification → Trust Receipt
                 </p>
               </div>
             </div>

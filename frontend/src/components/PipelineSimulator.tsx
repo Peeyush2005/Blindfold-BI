@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import {
-  Play, Pause, RotateCcw, CheckCircle2, Clock,
-  ShieldCheck, Cpu, Database, Terminal, ArrowRight, Lock,
-  Check, FileCheck, Layers, ChevronRight
+  Play, Pause, RotateCcw, Clock, CheckCircle2,
+  Cpu, Database, Terminal, ArrowRight, Lock,
+  Check, FileCheck, Layers, ChevronRight, Sparkles, Shield,
+  Award, Eye
 } from 'lucide-react';
 import type { PipelineStepEvent } from '../types';
 
@@ -53,26 +54,38 @@ export const PipelineSimulator: React.FC<PipelineSimulatorProps> = ({
       case 2: return <Layers className="w-4 h-4 text-amber-400" />;
       case 3: return <Cpu className="w-4 h-4 text-purple-400" />;
       case 4: return <Lock className="w-4 h-4 text-emerald-400" />;
-      case 5: return <SparklesIcon className="w-4 h-4 text-indigo-400" />;
-      case 6: return <Database className="w-4 h-4 text-amber-500" />;
-      case 7: return <FileCheck className="w-4 h-4 text-rose-400" />;
-      case 8: return <ShieldCheck className="w-4 h-4 text-teal-400" />;
+      case 5: return <Database className="w-4 h-4 text-cyan-400" />;
+      case 6: return <Shield className="w-4 h-4 text-teal-400" />;
+      case 7: return <Sparkles className="w-4 h-4 text-indigo-400" />;
+      case 8: return <FileCheck className="w-4 h-4 text-rose-400" />;
+      case 9: return <Eye className="w-4 h-4 text-blue-400" />;
+      case 10: return <Award className="w-4 h-4 text-emerald-400" />;
       default: return <ChevronRight className="w-4 h-4 text-slate-400" />;
     }
   };
 
   const getPrivacyNotice = (stepNum: number) => {
     switch (stepNum) {
+      case 1:
+        return "📥 S1 Intake & Normalization: Inbound query sanitized, whitespace stripped, and temporal/sector qualifiers extracted.";
+      case 2:
+        return "🔍 S2 Understand & Ambiguity: Evaluates query terms against Metric Contracts; generates clarification chips if keywords are polysemous.";
+      case 3:
+        return "🧠 S3 Tool Planning: Selects the single authoritative analytical tool from the 14-tool deterministic registry (DuckDB).";
       case 4:
-        return "🛡️ Blindfold Privacy Gateway: Real client codes, deal titles, and employee names were sanitized into ephemeral session tokens (e.g. CLIENT_ENT_088). No PII leaves the local boundary.";
+        return "🛡️ S4 Blindfold Gateway (Inbound): Ephemeral HMAC-SHA256 surrogate tokenization. Real deal aliases, client names, and sales reps are masked (CLIENT_ENT_xxx, PROJECT_DEAL_xxx, OWNER_REP_xx). Zero PII leaves the local boundary.";
       case 5:
-        return "⚡ NVIDIA NIM (Llama-3.3-70B): Received strictly tokenized text and pre-computed analytical figures. Prompt engineering forbids mental arithmetic.";
+        return "🧮 S5 DuckDB Deterministic Engine: Executed sub-5ms vectorized SQL directly over 332 deals and 176 work orders. Zero LLM mental arithmetic in totals or percentages.";
       case 6:
-        return "🧮 DuckDB Deterministic Engine: Executed pure vectorized SQL directly over 342 deals and 175 work orders. Zero LLM hallucinations in totals or percentages.";
+        return "🔒 S6 Blindfold Gateway (Outbound): Audits DuckDB tool outputs, ensuring all raw entities are tokenized before external LLM dispatch.";
       case 7:
-        return "🔍 Hallucination Verifier: Scanned LLM response text, converting metrics to Crore/Lakh scales to mathematically match ground truth. Fabricated numbers are rejected.";
+        return "⚡ S7 NVIDIA NIM Synthesis: Llama-3.3-70B generates executive prose citing numbers strictly by reference tokens ([[F1]], [[F2]]). Prompt engineering strictly forbids arithmetic.";
       case 8:
-        return "✨ De-anonymizer & Trust Receipt: Safely rehydrated tokens back to human-readable names for executive review alongside an immutable cryptographic audit receipt.";
+        return "🔍 S8 Numbers-by-Reference Verifier: Scanned LLM response text, cross-scaling Crore/Lakh units against DuckDB ground truth. Ungrounded claims rejected.";
+      case 9:
+        return "✨ S9 Controlled Re-identification: Rehydrated tokens back to human-readable names strictly server-side for authenticated display.";
+      case 10:
+        return "📜 S10 Trust Receipt Assembly: Finalizes the response envelope with verified facts, exclusions ledger, rows scanned, and zero-hallucination guarantee.";
       default:
         return null;
     }
@@ -83,12 +96,12 @@ export const PipelineSimulator: React.FC<PipelineSimulatorProps> = ({
       <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-8 text-center text-slate-400">
         <Cpu className={`w-12 h-12 mx-auto text-slate-600 mb-3 ${isExecuting ? 'animate-spin text-cyan-400' : 'animate-pulse'}`} />
         <h3 className="text-sm font-semibold text-slate-200">
-          {isExecuting ? 'Tracing Live Execution Pipeline...' : 'Simulation Engine Ready'}
+          {isExecuting ? 'Tracing Live S1-S10 Execution Pipeline...' : 'Simulation Engine Ready'}
         </h3>
         <p className="text-xs text-slate-400 max-w-md mx-auto mt-1">
           {isExecuting
             ? 'Intercepting parameters, tokenizing PII, running DuckDB queries, and querying NVIDIA NIM...'
-            : 'Submit an executive query or choose a suggestion chip to trace the 8-stage Blindfold BI privacy and verification pipeline in real-time.'}
+            : 'Submit an executive query or choose a suggestion chip to trace the S1-S10 Blindfold BI privacy and verification pipeline in real-time.'}
         </p>
       </div>
     );
@@ -105,10 +118,10 @@ export const PipelineSimulator: React.FC<PipelineSimulatorProps> = ({
           <div className="flex items-center space-x-2">
             <span className={`flex h-2.5 w-2.5 rounded-full ${isExecuting ? 'bg-amber-400 animate-ping' : 'bg-cyan-400'}`} />
             <h2 className="text-sm font-bold uppercase tracking-wider text-slate-200 font-mono m-0">
-              Live Pipeline Workflow Simulator
+              Live S1-S10 State Machine Simulator
             </h2>
             <span className="text-[10px] px-2 py-0.5 rounded bg-slate-800 text-cyan-400 font-mono border border-slate-700">
-              8 Stages Verified
+              10 Stages Verified
             </span>
           </div>
           {queryText && (
@@ -173,10 +186,10 @@ export const PipelineSimulator: React.FC<PipelineSimulatorProps> = ({
         </div>
       </div>
 
-      {/* 8-Stage Node Pipeline Visualization */}
+      {/* 10-Stage Node Pipeline Visualization */}
       <div className="relative mb-6">
         <div className="overflow-x-auto pb-4 pt-2">
-          <div className="flex items-center min-w-[780px] justify-between relative px-2">
+          <div className="flex items-center min-w-[950px] justify-between relative px-2">
 
             {/* Connecting Track Line */}
             <div className="absolute top-1/2 left-6 right-6 h-[2px] bg-slate-800 -translate-y-1/2 z-0" />
@@ -185,13 +198,13 @@ export const PipelineSimulator: React.FC<PipelineSimulatorProps> = ({
               const isActive = idx === activeStepIndex;
               const isPast = idx < activeStepIndex;
               return (
-                <div key={step.step_number} className="relative z-10 flex flex-col items-center">
+                <div key={step.step_number || idx} className="relative z-10 flex flex-col items-center">
                   <button
                     onClick={() => {
                       setIsPlaying(false);
                       setActiveStepIndex(idx);
                     }}
-                    className={`group relative flex items-center justify-center w-11 h-11 rounded-xl transition-all duration-300 ${
+                    className={`group relative flex items-center justify-center w-10 h-10 rounded-xl transition-all duration-300 ${
                       isActive
                         ? 'bg-gradient-to-tr from-indigo-600 to-cyan-500 text-white shadow-lg shadow-cyan-500/30 ring-4 ring-cyan-500/20 scale-110'
                         : isPast
@@ -203,7 +216,7 @@ export const PipelineSimulator: React.FC<PipelineSimulatorProps> = ({
 
                     {/* Status Pill on top of node */}
                     <span className="absolute -top-2 -right-1 text-[9px] font-mono px-1 py-0.2 rounded-full bg-slate-900 border border-slate-700 text-slate-300">
-                      {step.step_number}
+                      S{step.step_number}
                     </span>
                   </button>
 
@@ -211,7 +224,7 @@ export const PipelineSimulator: React.FC<PipelineSimulatorProps> = ({
                   <span className={`text-[10px] font-medium mt-2 text-center max-w-[85px] truncate transition ${
                     isActive ? 'text-cyan-400 font-semibold' : 'text-slate-400'
                   }`}>
-                    {step.step_name.split(' ')[0]} {step.step_name.split(' ')[1] || ''}
+                    {step.step_name.replace(/^S\d+:\s*/, '').split(' ')[0]} {step.step_name.replace(/^S\d+:\s*/, '').split(' ')[1] || ''}
                   </span>
 
                   {/* Duration Badge */}
@@ -308,10 +321,4 @@ export const PipelineSimulator: React.FC<PipelineSimulatorProps> = ({
   );
 };
 
-function SparklesIcon(props: any) {
-  return (
-    <svg {...props} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
-    </svg>
-  );
-}
+export default PipelineSimulator;
