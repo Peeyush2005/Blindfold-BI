@@ -9,5 +9,6 @@ httpx>=0.28.0
 pyyaml>=6.0.2
 python-dotenv>=1.0.1
 mcp>=1.2.0
+openai>=1.50.0
 pytest>=8.3.0
 anyio>=4.8.0
