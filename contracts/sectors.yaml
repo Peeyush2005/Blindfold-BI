@@ -1,0 +1,49 @@
+version: "1.0.0"
+canonical_sectors:
+  - name: "Mining"
+    aliases: ["mining", "quarry", "mines", "extraction", "coal"]
+    description: "Open-pit & underground volumetric surveying, compliance, stockpile monitoring."
+
+  - name: "Renewables"
+    aliases: ["renewables", "solar", "wind", "green energy", "pv"]
+    description: "Solar PV thermography, wind turbine blade inspection, site planning."
+    is_energy: true
+
+  - name: "Power"
+    aliases: ["power", "powerline", "powerlines", "transmission", "substation", "grid", "electrical"]
+    description: "Transmission line corridor monitoring, substation inspections, tower health."
+    is_energy: true
+
+  - name: "Utilities"
+    aliases: ["utilities", "utility", "water", "pipeline", "gas"]
+    description: "Municipal pipelines, water distribution, canal surveys, utility networks."
+    is_energy: true
+
+  - name: "Infrastructure"
+    aliases: ["infrastructure", "infra", "highways", "roads", "railways", "urban", "construction", "smart city"]
+    description: "Linear infrastructure monitoring, NHAI highway progress, bridge structural scans."
+
+  - name: "Agriculture"
+    aliases: ["agriculture", "agri", "crop", "plantation", "farming"]
+    description: "Crop health indexing (NDVI), yield estimation, pesticide precision spraying."
+
+  - name: "Security & Surveillance"
+    aliases: ["security & surveillance", "security and surveillance", "security", "surveillance", "defense", "perimeter", "police"]
+    description: "Perimeter monitoring, event security, anti-intrusion, law enforcement."
+
+  - name: "Tender"
+    aliases: ["tender", "govt tender", "bids", "public tender", "rfp", "e-procurement"]
+    description: "Large state and central government drone procurement bids and state mapping."
+    is_outlier_prone: true
+
+  - name: "Other"
+    aliases: ["other", "others", "unspecified", "dsp", "manufacturing", "aviation", "misc", "general", "unclassified"]
+    description: "Miscellaneous or unclassified exploratory drone deployments."
+
+energy_group:
+  name: "Energy Cluster"
+  sectors:
+    - "Renewables"
+    - "Power"
+    - "Utilities"
+  description: "Aggregated energy verticals representing green energy, power transmission, and municipal utilities."

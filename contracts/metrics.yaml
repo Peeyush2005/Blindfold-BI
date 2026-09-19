@@ -1,0 +1,133 @@
+version: "1.0.0"
+domain: "Enterprise Drone Operations & Sales - Skylark Drones"
+fiscal_calendar: "Indian Fiscal Year (April 1 - March 31)"
+
+metrics:
+  total_deals:
+    name: "Total Deals Count"
+    sql: "SELECT COUNT(*) FROM deals"
+    ground_truth: 332
+    unit: "count"
+    description: "Total deduplicated deals in the sales pipeline."
+
+  open_deals_count:
+    name: "Open Deals Count"
+    sql: "SELECT COUNT(*) FROM deals WHERE status = 'Open'"
+    ground_truth: 49
+    unit: "count"
+    description: "Number of currently active, open sales opportunities."
+
+  open_deals_value:
+    name: "Open Pipeline Value"
+    sql: "SELECT COALESCE(SUM(deal_value), 0.0) FROM deals WHERE status = 'Open'"
+    ground_truth: 688248348.0
+    formatted_ground_truth: "₹68.82 Cr"
+    unit: "INR"
+    description: "Total unweighted deal value for all open pipeline opportunities."
+
+  weighted_open_pipeline:
+    name: "Weighted Open Pipeline Value"
+    sql: "SELECT COALESCE(SUM(weighted_deal_value), 0.0) FROM deals WHERE status = 'Open'"
+    unit: "INR"
+    description: "Probability-weighted open pipeline (High: 80%, Medium: 50%, Low: 20%, Default: 30%)."
+
+  won_deals_count:
+    name: "Won Deals Count"
+    sql: "SELECT COUNT(*) FROM deals WHERE status = 'Won'"
+    ground_truth: 153
+    unit: "count"
+    description: "Total count of closed-won opportunities."
+
+  won_deals_value:
+    name: "Won Deals Value"
+    sql: "SELECT COALESCE(SUM(deal_value), 0.0) FROM deals WHERE status = 'Won'"
+    ground_truth: 95027337.0
+    formatted_ground_truth: "₹9.50 Cr"
+    unit: "INR"
+    description: "Total contract value of closed-won sales deals."
+
+  tender_open_pipeline:
+    name: "Tender Sector Open Pipeline"
+    sql: "SELECT COALESCE(SUM(deal_value), 0.0) FROM deals WHERE status = 'Open' AND sector = 'Tender'"
+    ground_truth: 532036730.0
+    formatted_ground_truth: "₹53.20 Cr"
+    unit: "INR"
+    share_of_open_pipeline: 77.3
+    description: "High-concentration government/tender bids in open pipeline."
+
+  non_tender_open_pipeline:
+    name: "Non-Tender Open Pipeline"
+    sql: "SELECT COALESCE(SUM(deal_value), 0.0) FROM deals WHERE status = 'Open' AND sector != 'Tender'"
+    ground_truth: 156211618.0
+    formatted_ground_truth: "₹15.62 Cr"
+    unit: "INR"
+    description: "Commercial and industrial enterprise open pipeline excluding large tenders."
+
+  energy_open_pipeline:
+    name: "Energy Open Pipeline"
+    sql: "SELECT COALESCE(SUM(deal_value), 0.0) FROM deals WHERE status = 'Open' AND sector IN ('Renewables', 'Power', 'Utilities')"
+    ground_truth: 31900000.0
+    formatted_ground_truth: "₹3.19 Cr"
+    deal_count: 12
+    unit: "INR"
+    description: "Pipeline spanning renewable energy, power transmission, and public utilities."
+
+  total_work_orders:
+    name: "Total Work Orders Count"
+    sql: "SELECT COUNT(*) FROM work_orders"
+    ground_truth: 176
+    unit: "count"
+    description: "Total operational drone work orders tracked."
+
+  contracted_amount_excl_gst:
+    name: "Contracted Work Orders (Excl. GST)"
+    sql: "SELECT COALESCE(SUM(amount_excl_gst), 0.0) FROM work_orders"
+    ground_truth: 211585029.0
+    formatted_ground_truth: "₹21.16 Cr"
+    unit: "INR"
+    description: "Total approved PO/LOI work order value excluding Goods and Services Tax."
+
+  billed_amount_excl_gst:
+    name: "Billed Work Orders (Excl. GST)"
+    sql: "SELECT COALESCE(SUM(billed_excl_gst), 0.0) FROM work_orders"
+    unit: "INR"
+    description: "Cumulative invoiced revenue excluding GST."
+
+  collected_amount_incl_gst:
+    name: "Collected Revenue (Incl. GST)"
+    sql: "SELECT COALESCE(SUM(collected_incl_gst), 0.0) FROM work_orders"
+    unit: "INR"
+    description: "Actual cash receipts in bank accounts including GST."
+
+  unbilled_backlog_excl_gst:
+    name: "Unbilled Work Order Backlog"
+    sql: "SELECT COALESCE(SUM(to_be_billed_excl_gst), 0.0) FROM work_orders"
+    unit: "INR"
+    description: "Contracted work value pending invoice generation."
+
+  net_receivable_amount:
+    name: "Net Accounts Receivable"
+    sql: "SELECT COALESCE(SUM(receivable_amount), 0.0) FROM work_orders"
+    ground_truth: 36339788.0
+    formatted_ground_truth: "₹3.63 Cr"
+    negative_rows_count: 11
+    unit: "INR"
+    description: "Net accounts receivable reflecting unpaid invoices minus advance credit notes."
+
+  revenue_realization_rate:
+    name: "Revenue Realization Rate"
+    formula: "(billed_amount_excl_gst / contracted_amount_excl_gst) * 100"
+    unit: "percentage"
+    description: "Percentage of contracted commercial value formally invoiced."
+
+  collection_efficiency_rate:
+    name: "Collection Efficiency Rate"
+    formula: "(collected_amount_incl_gst / billed_amount_incl_gst) * 100"
+    unit: "percentage"
+    description: "Percentage of invoiced cash successfully collected."
+
+  cross_board_conversion_rate:
+    name: "Cross-Board Sector Conversion Rate"
+    formula: "(contracted_wo_amount / won_deal_value) * 100"
+    unit: "percentage"
+    description: "Operational delivery value realized relative to closed-won sales value by sector."

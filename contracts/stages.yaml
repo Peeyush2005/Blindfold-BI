@@ -1,0 +1,60 @@
+version: "1.0.0"
+
+crm_stages:
+  - code: "A"
+    name: "A. Lead Generated"
+    probability_weight: 0.1
+    description: "Initial prospect identified; exploratory dialogue."
+  - code: "B"
+    name: "B. Qualified"
+    probability_weight: 0.3
+    description: "Budget, authority, need, and timeline confirmed."
+  - code: "C"
+    name: "C. Proposal Sent"
+    probability_weight: 0.5
+    description: "Formal commercial proposal or tender bid submitted."
+  - code: "D"
+    name: "D. Demo / POC"
+    probability_weight: 0.7
+    description: "Field proof-of-concept or flight demo successfully executed."
+  - code: "E"
+    name: "E. Negotiation / Contracting"
+    probability_weight: 0.85
+    description: "Final contract terms, MSA, or PO in legal review."
+
+deal_statuses:
+  - status: "Open"
+    description: "Active deal pipeline in progress."
+  - status: "Won"
+    description: "Closed-won deal with agreed commercial scope."
+  - status: "Lost"
+    description: "Disqualified or competitor-awarded opportunity."
+
+probability_weights:
+  High: 0.80
+  Medium: 0.50
+  Low: 0.20
+  Default: 0.30
+
+work_order_execution_statuses:
+  - status: "Completed"
+    is_terminal: true
+    description: "Flight operations and final data processing delivered to client."
+  - status: "Ongoing (Monthly)"
+    is_terminal: false
+    description: "Recurring multi-month drone surveying retainer."
+  - status: "Paused/Stuck"
+    is_terminal: false
+    requires_attention: true
+    description: "Operations paused due to client site clearance, weather, or regulatory holds."
+  - status: "Not Started"
+    is_terminal: false
+    description: "Work order created; awaiting deployment mobilization."
+
+billing_statuses:
+  - status: "Billed"
+    description: "Invoices generated for all completed flight phases."
+  - status: "Partially Billed"
+    description: "Portion of milestone invoiced; balance remains unbilled."
+  - status: "Unbilled"
+    description: "Work executed or contracted, awaiting invoice generation."

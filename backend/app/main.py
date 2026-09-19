@@ -16,6 +16,7 @@ from app.tools.revenue_tools import get_revenue_realization_summary
 from app.tools.operations_tools import get_work_order_health, get_cross_board_conversion, get_data_debt_report
 from app.tools.executive_tools import get_executive_brief
 from app.api.monday_routes import router as monday_router
+from app.tools.registry import tools_router, registry
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -42,6 +43,10 @@ app.add_middleware(
 )
 
 app.include_router(monday_router)
+app.include_router(tools_router)
+
+if registry.mcp_server is not None:
+    app.mount("/mcp", registry.mcp_server.sse_app())
 
 @app.get("/health")
 def health():

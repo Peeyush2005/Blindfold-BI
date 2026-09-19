@@ -1,0 +1,106 @@
+version: "1.0.0"
+
+deals_board:
+  source_sheet: "Deal funnel Data.xlsx"
+  table_name: "deals"
+  columns:
+    deal_alias:
+      type: "string"
+      source_name: "Deal Name"
+      anonymized: true
+      description: "Pseudonymized deal name."
+    owner_id:
+      type: "string"
+      source_name: "Owner code"
+      anonymized: true
+      description: "BD / KAM personnel identifier."
+    client_id:
+      type: "string"
+      source_name: "Client Code"
+      anonymized: true
+      description: "Client account identifier."
+    status:
+      type: "string"
+      source_name: "Deal Status"
+      allowed_values: ["Open", "Won", "Lost"]
+    deal_stage:
+      type: "string"
+      source_name: "Deal Stage"
+    sector:
+      type: "string"
+      source_name: "Sector/service"
+      canonical: true
+    deal_value:
+      type: "float"
+      source_name: "Masked Deal value"
+      currency: "INR"
+    closure_probability:
+      type: "string"
+      source_name: "Closure Probability"
+      allowed_values: ["High", "Medium", "Low"]
+    close_date_actual:
+      type: "date"
+      source_name: "Close Date (A)"
+    tentative_close_date:
+      type: "date"
+      source_name: "Tentative Close Date"
+    created_date:
+      type: "date"
+      source_name: "Created Date"
+
+work_orders_board:
+  source_sheet: "Work_Order_Tracker Data.xlsx"
+  table_name: "work_orders"
+  columns:
+    deal_alias:
+      type: "string"
+      source_name: "Deal name masked"
+      anonymized: true
+    serial_no:
+      type: "string"
+      source_name: "Serial #"
+    client_id:
+      type: "string"
+      source_name: "Customer Name Code"
+      anonymized: true
+    owner_id:
+      type: "string"
+      source_name: "BD/KAM Personnel code"
+      anonymized: true
+    sector:
+      type: "string"
+      source_name: "Sector"
+      canonical: true
+    execution_status:
+      type: "string"
+      source_name: "Execution Status"
+    billing_status:
+      type: "string"
+      source_name: "Billing Status"
+    amount_excl_gst:
+      type: "float"
+      source_name: "Amount in Rupees (Excl of GST) (Masked)"
+    billed_excl_gst:
+      type: "float"
+      source_name: "Billed Value in Rupees (Excl of GST.) (Masked)"
+    collected_incl_gst:
+      type: "float"
+      source_name: "Collected Amount in Rupees (Incl of GST.) (Masked)"
+    to_be_billed_excl_gst:
+      type: "float"
+      source_name: "Amount to be billed in Rs. (Exl. of GST) (Masked)"
+    receivable_amount:
+      type: "float"
+      source_name: "Amount Receivable (Masked)"
+    po_date:
+      type: "date"
+      source_name: "Date of PO/LOI"
+    start_date:
+      type: "date"
+      source_name: "Probable Start Date"
+    end_date:
+      type: "date"
+      source_name: "Probable End Date"
+    data_delivery_date:
+      type: "date"
+      source_name: "Data Delivery Date"

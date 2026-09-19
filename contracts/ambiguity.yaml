@@ -1,0 +1,72 @@
+version: "1.0.0"
+
+ambiguity_triggers:
+  - term: "revenue"
+    detected_intent: "Ambiguous revenue scope (sales pipeline vs. billed vs. cash receipts)"
+    clarifying_question: "Are you inquiring about Won Deal Value from sales, Invoiced Billed Work Orders, or Cash Receipts?"
+    options:
+      - label: "Won Deals (Sales Pipeline)"
+        action: "get_pipeline_summary"
+        params: {"status": "Won"}
+        chip: "💰 Show Won Deals Value"
+      - label: "Billed Work Orders (Recognized Revenue)"
+        action: "get_revenue_realization"
+        params: {}
+        chip: "📄 Show Billed Work Orders"
+      - label: "Cash Collected"
+        action: "get_revenue_realization"
+        params: {}
+        chip: "🏦 Show Cash Collected"
+
+  - term: "pipeline"
+    detected_intent: "Ambiguous pipeline valuation method"
+    clarifying_question: "Would you like to analyze raw unweighted deal value or probability-weighted pipeline?"
+    options:
+      - label: "Raw Unweighted Pipeline"
+        action: "get_pipeline_summary"
+        params: {"weighted": false}
+        chip: "📊 Raw Pipeline by Sector"
+      - label: "Weighted Pipeline (Risk-Adjusted)"
+        action: "get_pipeline_summary"
+        params: {"weighted": true}
+        chip: "🎯 Risk-Adjusted Weighted Pipeline"
+
+  - term: "delays"
+    detected_intent: "Ambiguous operational vs sales backlog"
+    clarifying_question: "Would you like to examine delayed operational Work Orders or stalled sales pipeline deals?"
+    options:
+      - label: "Overdue Operational Work Orders"
+        action: "get_work_order_health"
+        params: {}
+        chip: "⚙️ Delayed Work Orders"
+      - label: "Stalled Sales Deals"
+        action: "get_stale_deals"
+        params: {}
+        chip: "⏱️ Stale Pipeline Deals"
+
+  - term: "debt"
+    detected_intent: "Ambiguous financial AR debt vs CRM data hygiene debt"
+    clarifying_question: "Are you reviewing Accounts Receivable debtor balances or CRM data quality debt (DQ001-DQ016)?"
+    options:
+      - label: "Accounts Receivable Balances"
+        action: "get_aging_receivables"
+        params: {}
+        chip: "💳 Outstanding AR Debtors"
+      - label: "Data Quality & Hygiene Debt"
+        action: "get_data_debt_report"
+        params: {}
+        chip: "⚠️ DQ Ledger Debt Report"
+
+starter_suggestion_chips:
+  - label: "📊 Leadership Brief"
+    prompt: "Generate the executive leadership brief with KPIs, wins, risks, and recommendations."
+  - label: "💰 Revenue Realization"
+    prompt: "Show the revenue realization waterfall from contracted to billed to collected."
+  - label: "🎯 Pipeline by Sector"
+    prompt: "What is our open pipeline breakdown across sectors and deal stages?"
+  - label: "⚙️ Operations Health"
+    prompt: "Analyze work order execution health, delayed deliveries, and unbilled backlog."
+  - label: "⚠️ Data Hygiene Debt"
+    prompt: "Which deals and work orders require ops remediation or have data debt?"
+  - label: "🌱 Energy Pipeline"
+    prompt: "Break down the energy pipeline across Renewables, Power, and Utilities."

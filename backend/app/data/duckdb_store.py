@@ -66,10 +66,30 @@ class DuckDBStore:
             SELECT * FROM wo_raw;
         """)
 
-        # Analytical View: sector_reconciliation (Cross-board alignment by canonical sector)
+        # Analytical View: sector_reconciliation (Cross-board alignment by 9 canonical sectors)
         self.con.execute("""
             CREATE OR REPLACE VIEW sector_reconciliation AS
-            WITH deal_sectors AS (
+            WITH canonical_list AS (
+                SELECT UNNEST(['Mining', 'Renewables', 'Power', 'Utilities', 'Infrastructure', 'Agriculture', 'Security & Surveillance', 'Tender', 'Other']) AS sector
+            ),
+            canonical_deals AS (
+                SELECT
+                    CASE
+                        WHEN LOWER(sector) IN ('mining', 'quarry', 'mines', 'extraction', 'coal') THEN 'Mining'
+                        WHEN LOWER(sector) IN ('renewables', 'solar', 'wind', 'green energy', 'pv') THEN 'Renewables'
+                        WHEN LOWER(sector) IN ('power', 'powerline', 'powerlines', 'transmission', 'substation', 'grid', 'electrical') THEN 'Power'
+                        WHEN LOWER(sector) IN ('utilities', 'utility', 'water', 'pipeline', 'gas') THEN 'Utilities'
+                        WHEN LOWER(sector) IN ('infrastructure', 'infra', 'highways', 'roads', 'railways', 'urban', 'construction', 'smart city') THEN 'Infrastructure'
+                        WHEN LOWER(sector) IN ('agriculture', 'agri', 'crop', 'plantation', 'farming') THEN 'Agriculture'
+                        WHEN LOWER(sector) IN ('security & surveillance', 'security and surveillance', 'security', 'surveillance', 'defense', 'perimeter', 'police') THEN 'Security & Surveillance'
+                        WHEN LOWER(sector) IN ('tender', 'govt tender', 'bids', 'public tender', 'rfp', 'e-procurement') THEN 'Tender'
+                        ELSE 'Other'
+                    END AS sector,
+                    status,
+                    deal_value
+                FROM deals
+            ),
+            deal_sectors AS (
                 SELECT
                     sector,
                     COUNT(*) AS total_deals,
@@ -77,8 +97,27 @@ class DuckDBStore:
                     COALESCE(SUM(CASE WHEN status = 'Open' THEN deal_value END), 0.0) AS open_pipeline_value,
                     COUNT(CASE WHEN status = 'Won' THEN 1 END) AS won_deals_count,
                     COALESCE(SUM(CASE WHEN status = 'Won' THEN deal_value END), 0.0) AS won_deal_value
-                FROM deals
+                FROM canonical_deals
                 GROUP BY sector
+            ),
+            canonical_wo AS (
+                SELECT
+                    CASE
+                        WHEN LOWER(sector) IN ('mining', 'quarry', 'mines', 'extraction', 'coal') THEN 'Mining'
+                        WHEN LOWER(sector) IN ('renewables', 'solar', 'wind', 'green energy', 'pv') THEN 'Renewables'
+                        WHEN LOWER(sector) IN ('power', 'powerline', 'powerlines', 'transmission', 'substation', 'grid', 'electrical') THEN 'Power'
+                        WHEN LOWER(sector) IN ('utilities', 'utility', 'water', 'pipeline', 'gas') THEN 'Utilities'
+                        WHEN LOWER(sector) IN ('infrastructure', 'infra', 'highways', 'roads', 'railways', 'urban', 'construction', 'smart city') THEN 'Infrastructure'
+                        WHEN LOWER(sector) IN ('agriculture', 'agri', 'crop', 'plantation', 'farming') THEN 'Agriculture'
+                        WHEN LOWER(sector) IN ('security & surveillance', 'security and surveillance', 'security', 'surveillance', 'defense', 'perimeter', 'police') THEN 'Security & Surveillance'
+                        WHEN LOWER(sector) IN ('tender', 'govt tender', 'bids', 'public tender', 'rfp', 'e-procurement') THEN 'Tender'
+                        ELSE 'Other'
+                    END AS sector,
+                    amount_excl_gst,
+                    billed_excl_gst,
+                    collected_incl_gst,
+                    receivable_amount
+                FROM work_orders
             ),
             wo_sectors AS (
                 SELECT
@@ -88,23 +127,35 @@ class DuckDBStore:
                     COALESCE(SUM(billed_excl_gst), 0.0) AS billed_amount_excl_gst,
                     COALESCE(SUM(collected_incl_gst), 0.0) AS collected_amount_incl_gst,
                     COALESCE(SUM(receivable_amount), 0.0) AS outstanding_receivable
-                FROM work_orders
+                FROM canonical_wo
                 GROUP BY sector
             )
             SELECT
-                COALESCE(d.sector, w.sector) AS sector,
+                c.sector,
                 COALESCE(d.total_deals, 0) AS total_deals,
                 COALESCE(d.open_deals_count, 0) AS open_deals_count,
+                COALESCE(d.open_deals_count, 0) AS open_deals,
                 COALESCE(d.open_pipeline_value, 0.0) AS open_pipeline_value,
+                COALESCE(d.open_pipeline_value, 0.0) AS open_pipeline_val,
                 COALESCE(d.won_deals_count, 0) AS won_deals_count,
+                COALESCE(d.won_deals_count, 0) AS won_deals,
                 COALESCE(d.won_deal_value, 0.0) AS won_deal_value,
+                COALESCE(d.won_deal_value, 0.0) AS won_deal_val,
                 COALESCE(w.total_work_orders, 0) AS total_work_orders,
                 COALESCE(w.contracted_amount_excl_gst, 0.0) AS contracted_amount_excl_gst,
+                COALESCE(w.contracted_amount_excl_gst, 0.0) AS contracted_excl_gst,
                 COALESCE(w.billed_amount_excl_gst, 0.0) AS billed_amount_excl_gst,
+                COALESCE(w.billed_amount_excl_gst, 0.0) AS billed_excl_gst,
                 COALESCE(w.collected_amount_incl_gst, 0.0) AS collected_amount_incl_gst,
-                COALESCE(w.outstanding_receivable, 0.0) AS outstanding_receivable
-            FROM deal_sectors d
-            FULL OUTER JOIN wo_sectors w ON d.sector = w.sector;
+                COALESCE(w.collected_amount_incl_gst, 0.0) AS collected_incl_gst,
+                COALESCE(w.outstanding_receivable, 0.0) AS outstanding_receivable,
+                COALESCE(w.outstanding_receivable, 0.0) AS receivable_amount,
+                CASE WHEN COALESCE(d.won_deals_count, 0) > 0
+                     THEN ROUND((COALESCE(w.total_work_orders, 0)::FLOAT / d.won_deals_count) * 100, 1)
+                     ELSE 0.0 END AS conversion_rate_pct
+            FROM canonical_list c
+            LEFT JOIN deal_sectors d ON c.sector = d.sector
+            LEFT JOIN wo_sectors w ON c.sector = w.sector;
         """)
 
         # Analytical View: deal_wo_lifecycle (Sector-level and join-key fallback)
