@@ -1,0 +1,110 @@
+version: "1.0.0"
+organization: "Skylark Drones"
+domain: "Enterprise Drone Operations & Sales"
+fiscal_year: "April 1 - March 31 (Indian Fiscal Year)"
+
+metrics:
+  pipeline_value:
+    name: "Pipeline Value"
+    formula: "SUM(Masked Deal value) WHERE Deal Status = 'Open'"
+    description: "Total raw value of all unclosed, active sales deals currently in progress."
+    weighted_formula: "SUM(Masked Deal value * Closure Probability Weight) WHERE Deal Status = 'Open'"
+    probability_weights:
+      High: 0.8
+      Medium: 0.5
+      Low: 0.2
+      default: 0.3
+
+  won_deal_value:
+    name: "Won Deal Value"
+    formula: "SUM(Masked Deal value) WHERE Deal Status = 'Won'"
+    description: "Total value of closed-won deals across all historical and current quarters."
+
+  work_order_contracted:
+    name: "Contracted Work Order Amount"
+    formula: "SUM(amount_excl_gst)"
+    description: "Total contracted value of work orders approved via PO/LOI excluding GST."
+
+  work_order_billed:
+    name: "Billed Work Order Amount"
+    formula: "SUM(billed_excl_gst)"
+    description: "Total invoiced work value recognized to date."
+
+  work_order_collected:
+    name: "Collected Work Order Amount"
+    formula: "SUM(collected_incl_gst)"
+    description: "Actual cash collected from clients into bank accounts."
+
+  outstanding_receivables:
+    name: "Outstanding Receivables"
+    formula: "SUM(receivable_amount)"
+    description: "Pending cash payments from clients on invoiced work."
+
+  revenue_realization_rate:
+    name: "Revenue Realization Rate"
+    formula: "(Total Billed Value Excl GST / Total Contracted Amount Excl GST) * 100"
+    unit: "percentage"
+    description: "Efficiency of turning contracted work orders into billable invoices."
+
+  collection_efficiency:
+    name: "Collection Efficiency Rate"
+    formula: "(Total Collected Amount Incl GST / Total Billed Value Incl GST) * 100"
+    unit: "percentage"
+    description: "Efficiency of collecting cash against billed invoices."
+
+  unbilled_backlog:
+    name: "Unbilled Work Order Backlog"
+    formula: "SUM(to_be_billed_excl_gst)"
+    description: "Contracted work value not yet billed."
+
+  deal_to_wo_conversion_rate:
+    name: "Won Deal to Work Order Conversion Rate"
+    formula: "(Count of Won Deals with linked Work Order / Total Count of Won Deals) * 100"
+    unit: "percentage"
+    description: "Proportion of Won Deals converted into formal operational Work Orders."
+
+  data_debt:
+    name: "Data Hygiene Debt Count"
+    formula: "Count of records with 'Update Required' or critical missing financial/execution milestones."
+    description: "Ranked ops remediation backlog for Monday.com board hygiene."
+
+ambiguity_triggers:
+  - keyword: "revenue"
+    question: "Did you mean Won Deals on the sales board, Billed Work Orders, or Cash Collected?"
+    options:
+      - label: "Won Deal Value"
+        query: "What is the total Won Deal value from the sales pipeline?"
+      - label: "Billed Work Orders"
+        query: "Show total billed work order revenue excluding GST"
+      - label: "Cash Collected"
+        query: "Show total collected cash from work orders"
+
+  - keyword: "pipeline"
+    question: "Would you like raw unweighted pipeline or probability-weighted pipeline?"
+    options:
+      - label: "Raw Pipeline"
+        query: "Show raw unweighted pipeline value by sector"
+      - label: "Weighted Pipeline"
+        query: "Show probability-weighted pipeline value by sector"
+
+  - keyword: "delays"
+    question: "Do you want to see delayed Work Orders in operations, or overdue Deals in sales?"
+    options:
+      - label: "Operational Delays"
+        query: "List work orders past end date that are not completed"
+      - label: "Sales Pipeline Stalls"
+        query: "List open deals past tentative close date"
+
+starter_chips:
+  - label: "📊 Executive Leadership Brief"
+    query: "Generate executive leadership brief with KPIs, wins, risks, and recommendations"
+  - label: "💰 Revenue Realization Waterfall"
+    query: "Show revenue realization from contracted to billed to collected"
+  - label: "🎯 Pipeline by Sector & Stage"
+    query: "What is our pipeline breakdown across sectors and deal stages?"
+  - label: "⚙️ Work Order Backlog & Health"
+    query: "Analyze work order execution health and unbilled backlog"
+  - label: "🔗 Won Deals to Work Orders Conversion"
+    query: "Show conversion rate from Won Deals to executed Work Orders"
+  - label: "⚠️ Data Debt & Hygiene Ops List"
+    query: "Which deals and work orders require ops updates or have missing values?"
