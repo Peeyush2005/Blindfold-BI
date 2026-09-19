@@ -11,12 +11,16 @@ param nvidiaApiKey string = ''
 @description('Container image tag for backend API')
 param containerImageTag string = 'latest'
 
+@description('Optional override for container image (e.g. initial bootstrap image)')
+param customImage string = ''
+
 // Resource Names
 var logAnalyticsName = '${appName}-logs'
 var containerRegistryName = replace('${appName}cr', '-', '')
 var containerAppEnvName = '${appName}-cae'
 var backendAppName = '${appName}-api'
 var staticWebAppName = '${appName}-frontend'
+var targetBackendImage = !empty(customImage) ? customImage : '${containerRegistry.properties.loginServer}/skylark-backend:${containerImageTag}'
 
 // 1. Log Analytics Workspace for Observability
 resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2022-10-01' = {
@@ -51,7 +55,7 @@ resource containerAppEnv 'Microsoft.App/managedEnvironments@2023-05-01' = {
       destination: 'log-analytics'
       logAnalyticsConfiguration: {
         customerId: logAnalytics.properties.customerId
-        sharedKey: logAnalytics.listKeys().primarySharedKeyValue
+        sharedKey: logAnalytics.listKeys().primarySharedKey
       }
     }
   }
@@ -77,7 +81,7 @@ resource backendApp 'Microsoft.App/containerApps@2023-05-01' = {
       secrets: [
         {
           name: 'nvidia-api-key'
-          value: nvidiaApiKey
+          value: !empty(nvidiaApiKey) ? nvidiaApiKey : 'nvapi-placeholder'
         }
         {
           name: 'acr-password'
@@ -96,7 +100,7 @@ resource backendApp 'Microsoft.App/containerApps@2023-05-01' = {
       containers: [
         {
           name: 'backend'
-          image: '${containerRegistry.properties.loginServer}/skylark-backend:${containerImageTag}'
+          image: targetBackendImage
           resources: {
             cpu: json('1.0')
             memory: '2.0Gi'
