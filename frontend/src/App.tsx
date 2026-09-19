@@ -5,6 +5,7 @@ import { ChatInterface } from './components/ChatInterface';
 import { DataDebtCenter } from './components/DataDebtCenter';
 import { ArchitectureView } from './components/ArchitectureView';
 import { MondayIntegrationView } from './components/MondayIntegrationView';
+import { apiUrl } from './apiConfig';
 import type { DashboardOverview } from './types';
 
 export function App() {
@@ -17,7 +18,7 @@ export function App() {
   const fetchDashboardData = async () => {
     setLoadingDashboard(true);
     try {
-      const res = await fetch('/api/dashboard');
+      const res = await fetch(apiUrl('/api/dashboard'));
       if (res.ok) {
         const data = await res.json();
         setDashboardData(data);
@@ -38,7 +39,7 @@ export function App() {
   const handleRefreshData = async () => {
     setIsRefreshing(true);
     try {
-      const refreshRes = await fetch('/api/data/refresh', { method: 'POST' });
+      const refreshRes = await fetch(apiUrl('/api/data/refresh'), { method: 'POST' });
       if (refreshRes.ok) {
         await fetchDashboardData();
       }

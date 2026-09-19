@@ -3,6 +3,7 @@ import {
   Link2, RefreshCw, Send, CheckCircle2, AlertCircle, Shield,
   ArrowRight, Check, Key, ExternalLink
 } from 'lucide-react';
+import { apiUrl, API_BASE_URL } from '../apiConfig';
 
 interface MondayStatus {
   status: 'connected' | 'disconnected';
@@ -51,7 +52,7 @@ export const MondayIntegrationView: React.FC = () => {
   const fetchStatus = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/monday/status');
+      const res = await fetch(apiUrl('/api/monday/status'));
       if (res.ok) {
         const data: MondayStatus = await res.json();
         setStatus(data);
@@ -74,7 +75,7 @@ export const MondayIntegrationView: React.FC = () => {
     setSaving(true);
     setActionMessage(null);
     try {
-      const res = await fetch('/api/monday/configure', {
+      const res = await fetch(apiUrl('/api/monday/configure'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -100,7 +101,7 @@ export const MondayIntegrationView: React.FC = () => {
     setSyncing(true);
     setActionMessage(null);
     try {
-      const res = await fetch('/api/monday/sync', { method: 'POST' });
+      const res = await fetch(apiUrl('/api/monday/sync'), { method: 'POST' });
       const data = await res.json();
       if (res.ok) {
         setActionMessage({
@@ -122,7 +123,7 @@ export const MondayIntegrationView: React.FC = () => {
     setPushingAlerts(true);
     setActionMessage(null);
     try {
-      const res = await fetch('/api/monday/push-debt-alerts', { method: 'POST' });
+      const res = await fetch(apiUrl('/api/monday/push-debt-alerts'), { method: 'POST' });
       const data = await res.json();
       if (res.ok) {
         setActionMessage({
@@ -140,7 +141,8 @@ export const MondayIntegrationView: React.FC = () => {
   };
 
   const handleCopyWebhook = () => {
-    const fullUrl = `${window.location.origin}${status?.webhook_url || '/api/monday/webhook'}`;
+    const backendOrigin = API_BASE_URL || window.location.origin;
+    const fullUrl = `${backendOrigin}${status?.webhook_url || '/api/monday/webhook'}`;
     navigator.clipboard.writeText(fullUrl);
     setCopiedWebhook(true);
     setTimeout(() => setCopiedWebhook(false), 2000);
@@ -259,7 +261,7 @@ export const MondayIntegrationView: React.FC = () => {
             </span>
           </div>
           <div className="mt-2 text-xs font-mono text-cyan-300 truncate">
-            {status?.webhook_url || '/api/monday/webhook'}
+            {apiUrl(status?.webhook_url || '/api/monday/webhook')}
           </div>
           <div className="mt-2 flex items-center justify-between">
             <button

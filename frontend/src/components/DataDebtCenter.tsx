@@ -3,6 +3,7 @@ import {
   AlertTriangle, Download, Filter, Search, RefreshCw
 } from 'lucide-react';
 import type { DataDebtItem } from '../types';
+import { apiUrl } from '../apiConfig';
 
 export const DataDebtCenter: React.FC = () => {
   const [items, setItems] = useState<DataDebtItem[]>([]);
@@ -18,7 +19,7 @@ export const DataDebtCenter: React.FC = () => {
   const fetchDataDebt = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/data-debt');
+      const res = await fetch(apiUrl('/api/data-debt'));
       if (res.ok) {
         const data = await res.json();
         const records = Array.isArray(data) ? data : (data.records || []);
@@ -73,7 +74,7 @@ export const DataDebtCenter: React.FC = () => {
 
         <div className="flex items-center space-x-3">
           <a
-            href="/api/data-debt/export"
+            href={apiUrl('/api/data-debt/export')}
             download="skylark_data_debt_report.csv"
             className="flex items-center space-x-2 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow-lg shadow-emerald-600/20 transition"
           >

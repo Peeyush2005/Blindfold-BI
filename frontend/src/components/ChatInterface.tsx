@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import type { ChatResponse, PipelineStepEvent, ChartData } from '../types';
 import { PipelineSimulator } from './PipelineSimulator';
+import { apiUrl } from '../apiConfig';
 
 interface ChatMessage {
   id: string;
@@ -81,7 +82,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       // 1. Attempt real-time SSE streaming endpoint
       let streamedSuccess = false;
       try {
-        const streamRes = await fetch('/api/chat/stream', {
+        const streamRes = await fetch(apiUrl('/api/chat/stream'), {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -171,7 +172,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
       // 2. Fallback to standard POST /api/chat if streaming was not successful
       if (!streamedSuccess) {
-        const res = await fetch('/api/chat', {
+        const res = await fetch(apiUrl('/api/chat'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
