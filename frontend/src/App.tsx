@@ -1,113 +1,69 @@
 import { useState, useEffect } from 'react';
-import { Navbar } from './components/Navbar';
-import { ExecutiveDashboard } from './components/ExecutiveDashboard';
-import { ChatInterface } from './components/ChatInterface';
-import { DataDebtCenter } from './components/DataDebtCenter';
-import { ArchitectureView } from './components/ArchitectureView';
-import { MondayIntegrationView } from './components/MondayIntegrationView';
 import { apiUrl } from './apiConfig';
-import type { DashboardOverview } from './types';
+import type { MetaSource } from './types';
+import { ChatInterface } from './components/ChatInterface';
 
 export function App() {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'chat' | 'debt' | 'architecture' | 'monday'>('dashboard');
-  const [dashboardData, setDashboardData] = useState<DashboardOverview | null>(null);
-  const [loadingDashboard, setLoadingDashboard] = useState<boolean>(true);
-  const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
-  const [chatInitialQuery, setChatInitialQuery] = useState<string | undefined>(undefined);
-
-  const fetchDashboardData = async () => {
-    setLoadingDashboard(true);
-    try {
-      const res = await fetch(apiUrl('/api/dashboard'));
-      if (res.ok) {
-        const data = await res.json();
-        setDashboardData(data);
-      } else {
-        console.error('Failed to load dashboard:', res.status);
-      }
-    } catch (err) {
-      console.error('Error loading dashboard:', err);
-    } finally {
-      setLoadingDashboard(false);
-    }
-  };
+  const [sourceMeta, setSourceMeta] = useState<MetaSource | null>(null);
+  const [metaError, setMetaError] = useState<boolean>(false);
 
   useEffect(() => {
-    fetchDashboardData();
+    const fetchMetaSource = async () => {
+      try {
+        const res = await fetch(apiUrl('/api/v1/meta/source'));
+        if (res.ok) {
+          const data: MetaSource = await res.json();
+          setSourceMeta(data);
+          setMetaError(false);
+        } else {
+          setMetaError(true);
+        }
+      } catch (err) {
+        setMetaError(true);
+      }
+    };
+
+    fetchMetaSource();
   }, []);
 
-  const handleRefreshData = async () => {
-    setIsRefreshing(true);
-    try {
-      const refreshRes = await fetch(apiUrl('/api/data/refresh'), { method: 'POST' });
-      if (refreshRes.ok) {
-        await fetchDashboardData();
-      }
-    } catch (err) {
-      console.error('Failed to refresh data cache:', err);
-    } finally {
-      setIsRefreshing(false);
-    }
-  };
-
-  const handleAskMetric = (metricQuestion: string) => {
-    setChatInitialQuery(metricQuestion);
-    setActiveTab('chat');
-  };
-
   return (
-    <div className="min-h-screen bg-[#070b14] text-slate-100 flex flex-col selection:bg-cyan-500 selection:text-white">
-      {/* Navigation Header */}
-      <Navbar
-        activeTab={activeTab}
-        setActiveTab={setActiveTab}
-        onRefreshData={handleRefreshData}
-        isRefreshing={isRefreshing}
-      />
-
-      {/* Main Content Viewport */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 pt-6">
-        {activeTab === 'dashboard' && (
-          <ExecutiveDashboard
-            data={dashboardData}
-            loading={loadingDashboard}
-            onNavigateToDebt={() => setActiveTab('debt')}
-            onAskMetric={handleAskMetric}
-          />
-        )}
-
-        {activeTab === 'chat' && (
-          <ChatInterface
-            initialQuery={chatInitialQuery}
-            onClearInitialQuery={() => setChatInitialQuery(undefined)}
-          />
-        )}
-
-        {activeTab === 'debt' && <DataDebtCenter />}
-
-        {activeTab === 'architecture' && <ArchitectureView />}
-
-        {activeTab === 'monday' && <MondayIntegrationView />}
-      </main>
-
-      {/* Persistent Footer */}
-      <footer className="mt-auto border-t border-slate-800/80 bg-slate-950/80 py-4 px-6 text-center text-xs text-slate-500">
-        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2">
-          <div className="flex items-center space-x-2">
-            <span className="h-1.5 w-1.5 rounded-full bg-cyan-400" />
-            <span className="font-mono text-slate-400">
-              Blindfold BI • Skylark Drones Enterprise Intelligence
-            </span>
-          </div>
-          <div className="flex items-center space-x-4 text-[11px] font-mono">
-            <span>Zero PII Leakage</span>
-            <span>•</span>
-            <span>DuckDB Deterministic Engine</span>
-            <span>•</span>
-            <span>NVIDIA NIM Llama-3.3-70B</span>
-          </div>
+    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-sky-500 selection:text-white">
+      {/* Header: Product name and one source badge only */}
+      <header className="h-14 border-b border-slate-800/80 bg-slate-900/50 px-4 sm:px-6 flex items-center justify-between">
+        <div className="flex items-center space-x-2">
+          <span className="text-sm font-semibold tracking-tight text-slate-100">
+            Skylark BI
+          </span>
         </div>
-      </footer>
+
+        <div>
+          {sourceMeta ? (
+            <div
+              className="px-2.5 py-1 rounded border border-slate-800 bg-slate-900/80 font-mono text-[11px] text-slate-300"
+              aria-label="Connected data source status"
+            >
+              {sourceMeta.display_badge ||
+                `monday.com · synced ${sourceMeta.synced_at} · as of ${sourceMeta.as_of_date}`}
+            </div>
+          ) : metaError ? (
+            <div
+              className="px-2.5 py-1 rounded border border-rose-500/30 bg-rose-500/10 font-mono text-[11px] text-rose-300"
+              aria-label="Data source unreachable"
+            >
+              source disconnected · offline
+            </div>
+          ) : (
+            <div className="px-2.5 py-1 rounded border border-slate-800/60 bg-slate-900/40 font-mono text-[11px] text-slate-500">
+              connecting...
+            </div>
+          )}
+        </div>
+      </header>
+
+      {/* Main Single-Screen Content: Chat & BI Blocks */}
+      <main className="flex-1 flex flex-col overflow-hidden">
+        <ChatInterface />
+      </main>
     </div>
   );
 }

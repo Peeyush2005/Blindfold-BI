@@ -35,6 +35,8 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+.claude/
+.schemathesis/
 
 # Logs
 *.log

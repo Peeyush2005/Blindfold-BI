@@ -1,46 +1,54 @@
-import React, { useState, useRef, useEffect } from 'react';
-import * as echarts from 'echarts';
-import {
-  Send, Bot, User, ShieldCheck, Sparkles,
-  ChevronDown, ChevronUp, ArrowRight, BarChart2
-} from 'lucide-react';
-import type { ChatResponse, PipelineStepEvent, ChartData } from '../types';
-import { PipelineSimulator } from './PipelineSimulator';
+import { useState, useEffect, useRef } from 'react';
+import { Send, AlertCircle, Sparkles } from 'lucide-react';
 import { apiUrl } from '../apiConfig';
+import type {
+  StarterChip,
+  AnswerPayload,
+  StageState,
+  ToolEventData,
+  LlmEventData,
+  StageName,
+} from '../types';
+import { RunPanel } from './RunPanel';
+import { BiBlocksRenderer } from './BiBlocksRenderer';
+
+const INITIAL_STAGES: StageName[] = [
+  'understand',
+  'plan',
+  'fetch',
+  'normalize',
+  'compute',
+  'narrate',
+  'verify',
+  'finalize',
+];
 
 interface ChatMessage {
   id: string;
   sender: 'user' | 'assistant';
-  text: string;
+  question?: string;
   timestamp: string;
-  response?: ChatResponse;
+  stages?: StageState[];
+  tools?: ToolEventData[];
+  llmCalls?: LlmEventData[];
+  totalMs?: number;
+  degraded?: boolean;
+  isCompleted?: boolean;
+  isError?: boolean;
+  errorMessage?: string;
+  answer?: AnswerPayload;
 }
 
-interface ChatInterfaceProps {
-  initialQuery?: string;
-  onClearInitialQuery?: () => void;
-}
-
-export const ChatInterface: React.FC<ChatInterfaceProps> = ({
-  initialQuery,
-  onClearInitialQuery,
-}) => {
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      id: 'welcome',
-      sender: 'assistant',
-      text: "👋 Welcome to **Blindfold BI for Skylark Drones**. I am your conversational intelligence executive co-pilot.\n\nAll real client names, deal codes, and project titles are scrubbed and anonymized before reaching external AI models. All arithmetic is calculated deterministically via DuckDB with mathematical hallucination verification.\n\nAsk any question regarding our sales pipeline, work order revenue realization, data debt, or financial waterfalls.",
-      timestamp: new Date().toLocaleTimeString(),
-    }
-  ]);
+export const ChatInterface: React.FC = () => {
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputQuery, setInputQuery] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [latestPipelineSteps, setLatestPipelineSteps] = useState<PipelineStepEvent[]>([]);
-  const [tracingQuery, setTracingQuery] = useState<string>('');
-  const [expandedReceipts, setExpandedReceipts] = useState<Record<string, boolean>>({});
-  const [showSimulator, setShowSimulator] = useState<boolean>(true);
+  const [starterChips, setStarterChips] = useState<StarterChip[]>([]);
+  const [apiError, setApiError] = useState<string | null>(null);
+  const [liveAriaStatus, setLiveAriaStatus] = useState<string>('Ready');
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -50,484 +58,399 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     scrollToBottom();
   }, [messages, isLoading]);
 
-  // Handle passed initial query from dashboard
+  // Fetch starter chips from API on mount
   useEffect(() => {
-    if (initialQuery && initialQuery.trim()) {
-      handleSendMessage(initialQuery);
-      if (onClearInitialQuery) onClearInitialQuery();
-    }
-  }, [initialQuery]);
+    const fetchStarterChips = async () => {
+      try {
+        const res = await fetch(apiUrl('/api/v1/tools/starter-chips'));
+        if (!res.ok) {
+          throw new Error(`API responded with status ${res.status}`);
+        }
+        const chips: StarterChip[] = await res.json();
+        setStarterChips(chips);
+        setApiError(null);
+      } catch (err: any) {
+        console.error('Failed to load starter chips from API:', err);
+        setApiError('API unreachable: Unable to load suggestion chips from analytical server.');
+      }
+    };
 
-  const handleSendMessage = async (queryText: string) => {
-    const text = queryText.trim();
-    if (!text || isLoading) return;
+    fetchStarterChips();
+  }, []);
 
-    const userMessageId = `user-${Date.now()}`;
+  const handleSendMessage = async (queryText: string, chipText?: string) => {
+    const question = (queryText || chipText || '').trim();
+    if (!question || isLoading) return;
+
+    setApiError(null);
+    setIsLoading(true);
+    setInputQuery('');
+    setLiveAriaStatus(`Analyzing query: ${question}`);
+
+    const userMsgId = `user-${Date.now()}`;
+    const assistantMsgId = `asst-${Date.now()}`;
+
+    // Add user message
     const userMsg: ChatMessage = {
-      id: userMessageId,
+      id: userMsgId,
       sender: 'user',
-      text: text,
+      question: question,
       timestamp: new Date().toLocaleTimeString(),
     };
 
-    setMessages((prev) => [...prev, userMsg]);
-    setInputQuery('');
-    setIsLoading(true);
-    setTracingQuery(text);
-    setLatestPipelineSteps([]); // Reset steps for live state machine simulation
+    // Initialize assistant message with 8 queued stages
+    const initialStageStates: StageState[] = INITIAL_STAGES.map((name) => ({
+      name,
+      status: 'queued',
+    }));
 
-    const sessionId = `skylark-session-${Date.now()}`;
+    const assistantMsg: ChatMessage = {
+      id: assistantMsgId,
+      sender: 'assistant',
+      timestamp: new Date().toLocaleTimeString(),
+      stages: initialStageStates,
+      tools: [],
+      llmCalls: [],
+      totalMs: 0,
+      degraded: false,
+      isCompleted: false,
+      isError: false,
+    };
+
+    setMessages((prev) => [...prev, userMsg, assistantMsg]);
+
+    const sessionId = `sess_${Date.now()}`;
 
     try {
-      // 1. Attempt real-time SSE streaming endpoint
-      let streamedSuccess = false;
-      try {
-        const streamRes = await fetch(apiUrl('/api/chat/stream'), {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Accept': 'text/event-stream',
-          },
-          body: JSON.stringify({
-            message: text,
-            session_id: sessionId,
-          }),
-        });
+      const response = await fetch(apiUrl('/api/v1/chat'), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'text/event-stream',
+        },
+        body: JSON.stringify({
+          session_id: sessionId,
+          question: question,
+          chip: chipText,
+        }),
+      });
 
-        if (streamRes.ok && streamRes.body && streamRes.headers.get('content-type')?.includes('text/event-stream')) {
-          const reader = streamRes.body.getReader();
-          const decoder = new TextDecoder();
-          let buffer = '';
-          let completedResponse: ChatResponse | null = null;
-
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            buffer += decoder.decode(value, { stream: true });
-
-            const blocks = buffer.split('\n\n');
-            buffer = blocks.pop() || '';
-
-            for (const block of blocks) {
-              if (!block.trim()) continue;
-              const lines = block.split('\n');
-              let eventType = 'message';
-              let dataStr = '';
-
-              for (const line of lines) {
-                if (line.startsWith('event: ')) {
-                  eventType = line.slice(7).trim();
-                } else if (line.startsWith('data: ')) {
-                  dataStr = line.slice(6).trim();
-                }
-              }
-
-              if (!dataStr) continue;
-
-              try {
-                if (eventType === 'step') {
-                  const stepPayload = JSON.parse(dataStr);
-                  const stepNum = parseInt(stepPayload.step_id?.replace(/\D/g, '') || '0') || 1;
-                  const stepEvent: PipelineStepEvent = {
-                    step_number: stepNum,
-                    step_name: stepPayload.step_name || `S${stepNum}`,
-                    status: stepPayload.status === 'completed' ? 'success' : (stepPayload.status || 'success'),
-                    duration_ms: stepPayload.duration_ms || 0,
-                    summary: stepPayload.summary || '',
-                    input_payload: stepPayload.details?.input || stepPayload.details || {},
-                    output_payload: stepPayload.details?.output || stepPayload.details || {},
-                  };
-
-                  setLatestPipelineSteps((prev) => {
-                    const existing = prev.filter((s) => s.step_number !== stepNum);
-                    return [...existing, stepEvent].sort((a, b) => a.step_number - b.step_number);
-                  });
-                } else if (eventType === 'complete') {
-                  completedResponse = JSON.parse(dataStr) as ChatResponse;
-                }
-              } catch (parseErr) {
-                console.warn('Error parsing SSE event payload:', parseErr);
-              }
-            }
-          }
-
-          if (completedResponse) {
-            streamedSuccess = true;
-            const assistantMsg: ChatMessage = {
-              id: `assistant-${Date.now()}`,
-              sender: 'assistant',
-              text: completedResponse.answer,
-              timestamp: new Date().toLocaleTimeString(),
-              response: completedResponse,
-            };
-            setMessages((prev) => [...prev, assistantMsg]);
-            if (completedResponse.pipeline_trace && completedResponse.pipeline_trace.length > 0) {
-              setLatestPipelineSteps(completedResponse.pipeline_trace);
-            }
-          }
-        }
-      } catch (streamErr) {
-        console.warn('Streaming fetch failed, falling back to standard POST:', streamErr);
+      if (!response.ok) {
+        throw new Error(`API error ${response.status}: ${response.statusText}`);
       }
 
-      // 2. Fallback to standard POST /api/chat if streaming was not successful
-      if (!streamedSuccess) {
-        const res = await fetch(apiUrl('/api/chat'), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            message: text,
-            session_id: sessionId,
-          }),
-        });
+      if (!response.body) {
+        throw new Error('Readable stream not supported by server');
+      }
 
-        if (!res.ok) {
-          throw new Error(`HTTP Error: ${res.status}`);
-        }
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
 
-        const data: ChatResponse = await res.json();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
 
-        const assistantMsg: ChatMessage = {
-          id: `assistant-${Date.now()}`,
-          sender: 'assistant',
-          text: data.answer,
-          timestamp: new Date().toLocaleTimeString(),
-          response: data,
-        };
+        buffer += decoder.decode(value, { stream: true });
+        const blocks = buffer.split('\n\n');
+        buffer = blocks.pop() || '';
 
-        setMessages((prev) => [...prev, assistantMsg]);
-        if (data.pipeline_trace && data.pipeline_trace.length > 0) {
-          setLatestPipelineSteps(data.pipeline_trace);
+        for (const block of blocks) {
+          if (!block.trim()) continue;
+
+          // Lines starting with colon are SSE comments (e.g. : keepalive)
+          const lines = block.split('\n');
+          let eventType = '';
+          let dataStr = '';
+
+          for (const line of lines) {
+            if (line.startsWith(':')) {
+              // Ignore keepalive comment
+              continue;
+            } else if (line.startsWith('event: ')) {
+              eventType = line.slice(7).trim();
+            } else if (line.startsWith('data: ')) {
+              dataStr = line.slice(6).trim();
+            }
+          }
+
+          if (!eventType || !dataStr) continue;
+
+          try {
+            const data = JSON.parse(dataStr);
+            handleSseEvent(assistantMsgId, eventType, data);
+          } catch (jsonErr) {
+            console.warn('Failed to parse SSE JSON:', jsonErr, dataStr);
+          }
         }
       }
     } catch (err: any) {
-      const errorMsg: ChatMessage = {
-        id: `assistant-error-${Date.now()}`,
-        sender: 'assistant',
-        text: `⚠️ **Error communicating with Blindfold Gateway**: ${err.message || 'Unable to connect to backend server. Please check that FastAPI is running on port 8000.'}`,
-        timestamp: new Date().toLocaleTimeString(),
-      };
-      setMessages((prev) => [...prev, errorMsg]);
+      console.error('Chat execution error:', err);
+      setApiError(`API Unreachable: ${err.message || 'Connection lost'}`);
+      setMessages((prev) =>
+        prev.map((msg) => {
+          if (msg.id === assistantMsgId) {
+            return {
+              ...msg,
+              isCompleted: true,
+              isError: true,
+              errorMessage: err.message || 'API connection failed',
+            };
+          }
+          return msg;
+        })
+      );
     } finally {
       setIsLoading(false);
+      setLiveAriaStatus('Ready');
+      setTimeout(() => inputRef.current?.focus(), 100);
     }
   };
 
-  const toggleReceipt = (id: string) => {
-    setExpandedReceipts((prev) => ({
-      ...prev,
-      [id]: !prev[id]
-    }));
+  const handleSseEvent = (messageId: string, eventType: string, data: any) => {
+    setMessages((prev) =>
+      prev.map((msg) => {
+        if (msg.id !== messageId) return msg;
+
+        switch (eventType) {
+          case 'run.started':
+            setLiveAriaStatus(`Pipeline run started for ${data.question}`);
+            return msg;
+
+          case 'stage': {
+            setLiveAriaStatus(`Stage ${data.name}: ${data.status}`);
+            const updatedStages = (msg.stages || []).map((st) => {
+              if (st.name === data.name) {
+                return {
+                  ...st,
+                  status: data.status,
+                  started_at: data.started_at,
+                  duration_ms: data.duration_ms,
+                  meta: data.meta,
+                };
+              }
+              return st;
+            });
+            return { ...msg, stages: updatedStages };
+          }
+
+          case 'tool': {
+            const currentTools = msg.tools || [];
+            return {
+              ...msg,
+              tools: [...currentTools, data as ToolEventData],
+            };
+          }
+
+          case 'llm': {
+            const currentLlm = msg.llmCalls || [];
+            return {
+              ...msg,
+              llmCalls: [...currentLlm, data as LlmEventData],
+            };
+          }
+
+          case 'answer': {
+            return {
+              ...msg,
+              answer: data as AnswerPayload,
+            };
+          }
+
+          case 'run.finished': {
+            setLiveAriaStatus('Pipeline run finished');
+            return {
+              ...msg,
+              totalMs: data.total_ms,
+              degraded: data.degraded || msg.degraded,
+              isCompleted: true,
+              isError: false,
+            };
+          }
+
+          case 'run.error': {
+            setLiveAriaStatus(`Pipeline error: ${data.message}`);
+            return {
+              ...msg,
+              isCompleted: true,
+              isError: true,
+              errorMessage: data.message,
+            };
+          }
+
+          default:
+            return msg;
+        }
+      })
+    );
   };
 
-  const presetQueries = [
-    "What is our active pipeline and weighted forecast?",
-    "What is our revenue realization rate and unbilled backlog?",
-    "Which work orders are delayed and what revenue is at risk?",
-    "Explain our deal-to-work-order conversion and conversion leakage."
-  ];
+  const handleReplay = (messageId: string) => {
+    const targetMsg = messages.find((m) => m.id === messageId);
+    if (!targetMsg || !targetMsg.stages) return;
+
+    const originalStages = [...targetMsg.stages];
+
+    // Reset all stages to queued
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.id === messageId
+          ? {
+              ...m,
+              stages: INITIAL_STAGES.map((name) => ({ name, status: 'queued' })),
+            }
+          : m
+      )
+    );
+
+    // Progressively replay through each stage
+    originalStages.forEach((stage, idx) => {
+      setTimeout(() => {
+        setMessages((prev) =>
+          prev.map((m) => {
+            if (m.id !== messageId) return m;
+            const updated = (m.stages || []).map((s) => (s.name === stage.name ? stage : s));
+            return { ...m, stages: updated };
+          })
+        );
+      }, (idx + 1) * 180);
+    });
+  };
 
   return (
-    <div className="space-y-6 pb-12">
-
-      {/* Top Banner: Simulator Toggle & Explanation */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between bg-slate-900/90 border border-slate-800 rounded-2xl p-4 gap-3">
-        <div className="flex items-center space-x-3">
-          <div className="p-2 rounded-xl bg-indigo-950 border border-indigo-800/60 text-indigo-400">
-            <Sparkles className="w-5 h-5" />
-          </div>
-          <div>
-            <h2 className="text-sm font-bold text-white uppercase tracking-wider font-mono m-0">
-              Conversational Executive Engine
-            </h2>
-            <p className="text-xs text-slate-400 m-0">
-              NVIDIA NIM Llama-3.3-70B • DuckDB Vectorized Calculations • PII Sanitization Gateway
-            </p>
-          </div>
-        </div>
-
-        <button
-          onClick={() => setShowSimulator(!showSimulator)}
-          className="flex items-center space-x-2 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 border border-slate-700 font-mono transition"
-        >
-          <BarChart2 className="w-3.5 h-3.5 text-cyan-400" />
-          <span>{showSimulator ? 'Hide Pipeline Simulator' : 'Show Pipeline Simulator'}</span>
-        </button>
+    <div className="flex flex-col h-[calc(100vh-4.5rem)] max-w-4xl mx-auto w-full px-4 text-slate-200">
+      {/* Hidden aria-live announcer for screen reader accessibility */}
+      <div className="sr-only" aria-live="polite" aria-atomic="true">
+        {liveAriaStatus}
       </div>
 
-      {/* Live Pipeline Simulator */}
-      {showSimulator && (
-        <PipelineSimulator
-          steps={latestPipelineSteps}
-          queryText={tracingQuery}
-          isExecuting={isLoading}
-        />
+      {/* Global API Error Alert (No canned data fallback) */}
+      {apiError && (
+        <div
+          role="alert"
+          className="my-3 p-3 rounded-md border border-rose-500/40 bg-rose-500/10 text-rose-300 text-xs flex items-center space-x-2.5"
+        >
+          <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
+          <span>{apiError}</span>
+        </div>
       )}
 
-      {/* Main Chat Container */}
-      <div className="bg-slate-900/80 border border-slate-800 rounded-2xl shadow-2xl flex flex-col min-h-[500px]">
+      {/* Messages Scroll Area or Empty State */}
+      <div className="flex-1 overflow-y-auto py-4 space-y-6">
+        {messages.length === 0 ? (
+          <div className="h-full flex flex-col justify-center items-center text-center px-4">
+            <div className="w-10 h-10 rounded-md bg-slate-800 border border-slate-700 flex items-center justify-center text-sky-400 mb-4">
+              <Sparkles className="w-5 h-5" />
+            </div>
+            <h1 className="text-xl font-medium text-slate-100 tracking-tight">
+              Skylark Business Intelligence
+            </h1>
+            <p className="text-xs text-slate-400 mt-1.5 max-w-md">
+              Conversational analytics computed deterministically with DuckDB. All numbers are
+              grounded in verified tool results.
+            </p>
 
-        {/* Messages List Area */}
-        <div className="flex-1 p-4 sm:p-6 space-y-6 overflow-y-auto max-h-[600px]">
-          {messages.map((msg) => (
-            <div
-              key={msg.id}
-              className={`flex items-start space-x-3 ${
-                msg.sender === 'user' ? 'justify-end' : 'justify-start'
-              }`}
-            >
-              {msg.sender === 'assistant' && (
-                <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-cyan-600 to-indigo-600 p-[1px] shrink-0 mt-1 shadow-md shadow-cyan-500/20">
-                  <div className="w-full h-full bg-slate-950 rounded-[11px] flex items-center justify-center">
-                    <Bot className="w-4 h-4 text-cyan-400" />
-                  </div>
+            {/* Starter Suggestion Chips (4 to 6 chips from API) */}
+            {starterChips.length > 0 && (
+              <div className="mt-8 w-full max-w-xl">
+                <div className="text-[11px] font-medium text-slate-400 mb-2.5 uppercase tracking-wider">
+                  Suggested Queries
                 </div>
-              )}
-
-              <div
-                className={`max-w-2xl sm:max-w-3xl rounded-2xl p-4 sm:p-5 text-sm transition-all ${
-                  msg.sender === 'user'
-                    ? 'bg-gradient-to-r from-indigo-600 to-indigo-700 text-white shadow-lg shadow-indigo-600/20'
-                    : 'bg-slate-950/90 border border-slate-800 text-slate-200 shadow-xl'
-                }`}
-              >
-                {/* Message Header */}
-                <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-800/60 text-xs font-mono text-slate-400">
-                  <span className="font-semibold text-slate-300">
-                    {msg.sender === 'user' ? 'Executive Prompt' : 'Blindfold BI Assistant'}
-                  </span>
-                  <span>{msg.timestamp}</span>
-                </div>
-
-                {/* Body Text */}
-                <div className="prose prose-invert prose-sm max-w-none leading-relaxed whitespace-pre-wrap">
-                  {msg.text}
-                </div>
-
-                {/* Dynamic Chart (If Included in Response) */}
-                {msg.response?.chart_data && (
-                  <ResponseChart chartData={msg.response.chart_data} />
-                )}
-
-                {/* Trust Receipt Accordion (Assistant Only) */}
-                {msg.response?.trust_receipt && (
-                  <div className="mt-4 pt-3 border-t border-slate-800/80">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {starterChips.map((chip, idx) => (
                     <button
-                      onClick={() => toggleReceipt(msg.id)}
-                      className="w-full flex items-center justify-between text-xs font-mono text-cyan-400 hover:text-cyan-300 transition py-1"
+                      key={idx}
+                      type="button"
+                      onClick={() => handleSendMessage('', chip.query || chip.label)}
+                      disabled={isLoading}
+                      className="p-3 text-left rounded-md border border-slate-800 bg-slate-900/60 hover:bg-slate-800/80 text-xs text-slate-300 hover:text-white transition-colors cursor-pointer"
                     >
-                      <div className="flex items-center space-x-2">
-                        <ShieldCheck className="w-4 h-4 text-emerald-400" />
-                        <span className="font-semibold">
-                          Cryptographic Trust Receipt (100% Grounded)
-                        </span>
-                      </div>
-                      {expandedReceipts[msg.id] ? (
-                        <ChevronUp className="w-4 h-4" />
-                      ) : (
-                        <ChevronDown className="w-4 h-4" />
-                      )}
+                      <div className="font-medium text-slate-200">{chip.label}</div>
+                      <div className="text-[11px] text-slate-400 mt-0.5 truncate">{chip.reason || chip.query}</div>
                     </button>
-
-                    {expandedReceipts[msg.id] && (
-                      <div className="mt-2.5 p-3 rounded-xl bg-slate-900 border border-slate-800 text-xs font-mono space-y-2 text-slate-300">
-                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pb-2 border-b border-slate-800">
-                          <div>
-                            <span className="text-slate-500 block text-[10px]">VERIFIED STATUS</span>
-                            <span className="text-emerald-400 font-bold">✓ Mathematical Match</span>
-                          </div>
-                          <div>
-                            <span className="text-slate-500 block text-[10px]">ROWS SCANNED</span>
-                            <span className="text-slate-200">{msg.response.trust_receipt.rows_scanned} records</span>
-                          </div>
-                          <div>
-                            <span className="text-slate-500 block text-[10px]">EXECUTION LATENCY</span>
-                            <span className="text-cyan-300">{msg.response.trust_receipt.execution_duration_ms} ms</span>
-                          </div>
-                        </div>
-
-                        <div>
-                          <span className="text-slate-500 block text-[10px]">ANALYTICAL TOOL EXECUTED</span>
-                          <span className="text-indigo-300 font-semibold">{msg.response.trust_receipt.query_executed}</span>
-                        </div>
-
-                        {msg.response.trust_receipt.exclusion_reasons && msg.response.trust_receipt.exclusion_reasons.length > 0 && (
-                          <div>
-                            <span className="text-slate-500 block text-[10px]">EXCLUSIONS & DATA HYGIENE</span>
-                            <ul className="list-disc list-inside text-[11px] text-amber-400/90 mt-0.5">
-                              {msg.response.trust_receipt.exclusion_reasons.map((r, i) => (
-                                <li key={i}>{r}</li>
-                              ))}
-                            </ul>
-                          </div>
-                        )}
-
-                        <div className="text-[10px] text-slate-500 pt-1">
-                          Data Snapshot: {msg.response.trust_receipt.data_as_of} • Confidence: 1.0 (Zero Hallucinations)
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* Suggestion & Clarification Chips */}
-                {msg.response?.suggestion_chips && msg.response.suggestion_chips.length > 0 && (
-                  <div className="mt-4 pt-3 border-t border-slate-800/80 flex flex-wrap gap-2">
-                    {msg.response.suggestion_chips.map((chip, idx) => (
-                      <button
-                        key={idx}
-                        onClick={() => handleSendMessage(chip.query)}
-                        className={`text-xs px-3 py-1.5 rounded-xl font-medium transition flex items-center space-x-1.5 ${
-                          chip.is_clarification
-                            ? 'bg-amber-950/60 hover:bg-amber-900 text-amber-300 border border-amber-800/80'
-                            : 'bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700'
-                        }`}
-                      >
-                        <span>{chip.label}</span>
-                        <ArrowRight className="w-3 h-3 text-slate-500" />
-                      </button>
-                    ))}
-                  </div>
-                )}
-
+                  ))}
+                </div>
               </div>
+            )}
+          </div>
+        ) : (
+          messages.map((msg) => (
+            <div key={msg.id} className="space-y-2">
+              {msg.sender === 'user' ? (
+                <div className="flex justify-end">
+                  <div className="max-w-xl px-4 py-2.5 rounded-md bg-slate-800 text-slate-100 text-sm border border-slate-700">
+                    {msg.question}
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-col space-y-2">
+                  {/* Live / Collapsible 8-stage Run Panel */}
+                  {msg.stages && msg.stages.length > 0 && (
+                    <RunPanel
+                      stages={msg.stages}
+                      tools={msg.tools || []}
+                      totalMs={msg.totalMs}
+                      isCompleted={Boolean(msg.isCompleted)}
+                      isError={Boolean(msg.isError)}
+                      degraded={Boolean(msg.degraded)}
+                      onReplay={() => handleReplay(msg.id)}
+                    />
+                  )}
 
-              {msg.sender === 'user' && (
-                <div className="w-8 h-8 rounded-xl bg-indigo-600 flex items-center justify-center shrink-0 mt-1 shadow-md shadow-indigo-600/20">
-                  <User className="w-4 h-4 text-white" />
+                  {/* Error display if run failed */}
+                  {msg.isError && msg.errorMessage && (
+                    <div className="p-3 rounded-md border border-rose-500/30 bg-rose-500/5 text-rose-300 text-xs">
+                      {msg.errorMessage}
+                    </div>
+                  )}
+
+                  {/* Generated BI Blocks strictly produced by analytical tools */}
+                  {msg.answer && msg.answer.blocks && (
+                    <BiBlocksRenderer
+                      blocks={msg.answer.blocks}
+                      receipt={msg.answer.receipt}
+                      chips={msg.answer.chips}
+                      onChipClick={(chipQuery) => handleSendMessage('', chipQuery)}
+                    />
+                  )}
                 </div>
               )}
             </div>
-          ))}
-
-          {/* Thinking / Loading Animation */}
-          {isLoading && (
-            <div className="flex items-start space-x-3">
-              <div className="w-8 h-8 rounded-xl bg-slate-950 border border-cyan-500/40 flex items-center justify-center shrink-0">
-                <Bot className="w-4 h-4 text-cyan-400 animate-spin" />
-              </div>
-              <div className="bg-slate-950 border border-slate-800 rounded-2xl p-4 shadow-xl text-slate-300 space-y-2">
-                <div className="flex items-center space-x-2 text-xs font-mono text-cyan-400">
-                  <span className="h-2 w-2 rounded-full bg-cyan-400 animate-ping" />
-                  <span>Executing 10-Stage S1-S10 Blindfold Verification Pipeline...</span>
-                </div>
-                <p className="text-xs text-slate-500 m-0">
-                  Intake → Ambiguity Analysis → Tool Planning → Inbound HMAC Tokenization → DuckDB SQL → Outbound Audit → NVIDIA NIM Llama-3.3-70B → Fact Verification → Server-Side Re-identification → Trust Receipt
-                </p>
-              </div>
-            </div>
-          )}
-
-          <div ref={messagesEndRef} />
-        </div>
-
-        {/* Preset Query Chips Carousel */}
-        <div className="p-3 bg-slate-950/60 border-t border-slate-800/80 overflow-x-auto flex items-center space-x-2">
-          <span className="text-[11px] font-mono text-slate-500 uppercase shrink-0 px-1">
-            Executive Queries:
-          </span>
-          {presetQueries.map((query, idx) => (
-            <button
-              key={idx}
-              disabled={isLoading}
-              onClick={() => handleSendMessage(query)}
-              className="shrink-0 text-xs px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 hover:border-slate-700 transition disabled:opacity-50"
-            >
-              {query}
-            </button>
-          ))}
-        </div>
-
-        {/* Input Bar */}
-        <div className="p-4 bg-slate-950 border-t border-slate-800 rounded-b-2xl">
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              handleSendMessage(inputQuery);
-            }}
-            className="flex items-center space-x-2"
-          >
-            <input
-              type="text"
-              value={inputQuery}
-              onChange={(e) => setInputQuery(e.target.value)}
-              disabled={isLoading}
-              placeholder="Ask an executive query (e.g., 'What is our realization rate?', 'Show delayed work orders')..."
-              className="flex-1 bg-slate-900 border border-slate-800 focus:border-cyan-500 rounded-xl px-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-cyan-500 font-sans transition disabled:opacity-50"
-            />
-            <button
-              type="submit"
-              disabled={isLoading || !inputQuery.trim()}
-              className="px-5 py-3 rounded-xl bg-gradient-to-r from-indigo-600 to-cyan-600 hover:from-indigo-500 hover:to-cyan-500 text-white font-medium text-sm flex items-center space-x-2 shadow-lg shadow-indigo-600/30 transition disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              <span>Query</span>
-              <Send className="w-4 h-4" />
-            </button>
-          </form>
-        </div>
-
+          ))
+        )}
+        <div ref={messagesEndRef} />
       </div>
 
-    </div>
-  );
-};
-
-// Subcomponent for rendering dynamically returned chart data in chat bubbles
-const ResponseChart: React.FC<{ chartData: ChartData }> = ({ chartData }) => {
-  const chartRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!chartRef.current) return;
-    const chart = echarts.init(chartRef.current);
-
-    const categories = chartData.categories || (chartData.data ? chartData.data.map(d => d.name) : []);
-    const values = chartData.values || (chartData.data ? chartData.data.map(d => d.value) : []);
-
-    const option: echarts.EChartsOption = {
-      backgroundColor: 'transparent',
-      title: {
-        text: chartData.title,
-        textStyle: { color: '#f8fafc', fontSize: 12, fontWeight: 'bold' },
-        left: 'center'
-      },
-      tooltip: {
-        trigger: 'axis',
-        axisPointer: { type: 'shadow' }
-      },
-      grid: { left: '3%', right: '4%', bottom: '8%', top: '18%', containLabel: true },
-      xAxis: {
-        type: 'category',
-        data: categories,
-        axisLine: { lineStyle: { color: '#334155' } },
-        axisLabel: { color: '#94a3b8', fontSize: 10, rotate: 15 }
-      },
-      yAxis: {
-        type: 'value',
-        splitLine: { lineStyle: { color: '#1e293b' } },
-        axisLabel: { color: '#94a3b8' }
-      },
-      series: [
-        {
-          type: 'bar',
-          data: values,
-          itemStyle: { color: '#6366f1' },
-          barWidth: '45%'
-        }
-      ]
-    };
-
-    chart.setOption(option);
-    const handleResize = () => chart.resize();
-    window.addEventListener('resize', handleResize);
-    return () => {
-      window.removeEventListener('resize', handleResize);
-      chart.dispose();
-    };
-  }, [chartData]);
-
-  return (
-    <div className="mt-4 p-3 bg-slate-900 border border-slate-800 rounded-xl">
-      <div ref={chartRef} className="w-full h-56" />
+      {/* Persistent Bottom Query Input Bar */}
+      <div className="py-3 border-t border-slate-800 bg-slate-950">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            handleSendMessage(inputQuery);
+          }}
+          className="flex items-center space-x-2"
+        >
+          <input
+            ref={inputRef}
+            type="text"
+            value={inputQuery}
+            onChange={(e) => setInputQuery(e.target.value)}
+            placeholder="Ask a question about pipeline, revenue, work orders, or data quality..."
+            disabled={isLoading}
+            className="flex-1 px-3.5 py-2.5 rounded-md bg-slate-900 border border-slate-800 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-sky-500 transition-colors disabled:opacity-50"
+            aria-label="Ask analytical query"
+          />
+          <button
+            type="submit"
+            disabled={isLoading || !inputQuery.trim()}
+            className="px-4 py-2.5 rounded-md bg-sky-600 hover:bg-sky-500 text-white text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer flex items-center space-x-1.5"
+            aria-label="Send query"
+          >
+            <span>Ask</span>
+            <Send className="w-3.5 h-3.5" />
+          </button>
+        </form>
+      </div>
     </div>
   );
 };
