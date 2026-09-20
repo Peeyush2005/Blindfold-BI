@@ -64,7 +64,15 @@ jobs:
         with:
           submodules: true
 
+      - name: Verify Deployment Credentials
+        if: env.AZURE_STATIC_WEB_APPS_API_TOKEN == ''
+        run: |
+          echo "::warning::AZURE_STATIC_WEB_APPS_API_TOKEN is not set in GitHub repository secrets. Skipping upload to Azure Static Web Apps."
+        env:
+          AZURE_STATIC_WEB_APPS_API_TOKEN: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
+
       - name: Build & Deploy Frontend
+        if: env.AZURE_STATIC_WEB_APPS_API_TOKEN != ''
         uses: Azure/static-web-apps-deploy@v1
         with:
           azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
@@ -73,7 +81,8 @@ jobs:
           app_location: "/frontend"
           api_location: ""
           output_location: "dist"
-          skip_deploy_on_missing_secrets: true
+        env:
+          AZURE_STATIC_WEB_APPS_API_TOKEN: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
 
   # 3. Build & Deploy Backend Container to Azure Container Apps
   deploy-backend:
@@ -86,8 +95,19 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
+      - name: Verify Backend Deployment Credentials
+        if: env.ACR_PASSWORD == '' || env.AZURE_CREDENTIALS == ''
+        run: |
+          echo "::warning::ACR_PASSWORD or AZURE_CREDENTIALS is not set in GitHub repository secrets. Skipping container image build and update."
+        env:
+          ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
+          AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
+
       - name: Set up Docker Buildx
+        if: env.ACR_PASSWORD != ''
         uses: docker/setup-buildx-action@v3
+        env:
+          ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
 
       - name: Log in to Azure Container Registry (ACR)
         if: env.ACR_PASSWORD != ''
