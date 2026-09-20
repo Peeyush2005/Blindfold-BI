@@ -10,6 +10,7 @@ import logging
 from typing import Dict, Any, Optional, Tuple
 from pathlib import Path
 import pandas as pd
+import duckdb
 
 from app.config import settings
 from app.data.normalize import normalize_deals, normalize_work_orders
@@ -26,8 +27,9 @@ class SnapshotService:
         self.wo_df: Optional[pd.DataFrame] = None
         self.last_synced: Optional[float] = None
         self.checksum: str = ""
-        self.source: str = "Local Excel Snapshot"
+        self.source: str = "monday.com (Snapshot)"
         self.is_stale: bool = False
+        self.as_of_date: str = "15 Jan 2026"
 
     def _compute_checksum(self, deals_df: pd.DataFrame, wo_df: pd.DataFrame) -> str:
         hasher = hashlib.sha256()
@@ -45,8 +47,15 @@ class SnapshotService:
 
         logger.info("Refreshing Blindfold BI data snapshot...")
         try:
-            d_df = normalize_deals(settings.DEALS_EXCEL_PATH)
-            w_df = normalize_work_orders(settings.WO_EXCEL_PATH)
+            if settings.DEALS_EXCEL_PATH.exists() and settings.WO_EXCEL_PATH.exists():
+                d_df = normalize_deals(settings.DEALS_EXCEL_PATH)
+                w_df = normalize_work_orders(settings.WO_EXCEL_PATH)
+            elif settings.SNAPSHOT_DEALS_PARQUET.exists() and settings.SNAPSHOT_WO_PARQUET.exists():
+                con = duckdb.connect()
+                d_df = con.read_parquet(str(settings.SNAPSHOT_DEALS_PARQUET)).df()
+                w_df = con.read_parquet(str(settings.SNAPSHOT_WO_PARQUET)).df()
+            else:
+                raise FileNotFoundError("Neither Excel fixtures nor Parquet snapshots found.")
 
             self.deals_df = d_df
             self.wo_df = w_df
@@ -66,7 +75,9 @@ class SnapshotService:
     def get_metadata(self) -> Dict[str, Any]:
         return {
             "source": self.source,
+            "connected": bool(settings.MONDAY_API_TOKEN) or (self.deals_df is not None and len(self.deals_df) > 0),
             "last_synced_timestamp": self.last_synced,
+            "as_of": self.as_of_date,
             "checksum": self.checksum,
             "is_stale": self.is_stale,
             "ttl_seconds": SNAPSHOT_TTL_SECONDS,

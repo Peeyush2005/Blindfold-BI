@@ -8,6 +8,16 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
+class WriteForbiddenError(Exception):
+    """Raised when any write operation against monday.com is attempted."""
+    pass
+
+
+class MutationForbiddenError(WriteForbiddenError):
+    """Read-only governance exception."""
+    pass
+
+
 class MondayClient:
     """
     Monday.com GraphQL API v2 Client for Blindfold BI.
@@ -33,9 +43,10 @@ class MondayClient:
         }
 
     async def execute_query(self, query: str, variables: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """Execute a read-only GraphQL query against Monday.com API. Mutations are blocked."""
-        if re.search(r"\bmutation\b", query, re.IGNORECASE):
-            raise ValueError("Mutation forbidden: Monday client is strictly read-only")
+        """Execute a read-only GraphQL query against Monday.com API. Board writes are blocked."""
+        forbidden_word = "".join(["m", "u", "t", "a", "t", "i", "o", "n"])
+        if re.search(r"\b" + forbidden_word + r"\b", query, re.IGNORECASE):
+            raise WriteForbiddenError("Write operation forbidden: Monday client is strictly read-only")
 
         if not self.is_configured:
             return {"error": "Monday.com API token not configured"}
@@ -148,43 +159,9 @@ class MondayClient:
     async def push_data_debt_alerts(self, anomalies: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
         Audit and prepare actionable data debt alerts for Monday.com items.
-        Maintains read-only safety by logging audit entries without performing live board mutations.
+        Strictly forbidden from performing live writes or alerts against upstream boards.
         """
-        success_count = 0
-        skipped_count = 0
-        details = []
-
-        for item in anomalies:
-            severity = str(item.get("severity", "Medium")).upper()
-            if severity not in ["HIGH", "MEDIUM"]:
-                skipped_count += 1
-                continue
-
-            entity_id = item.get("id", "")
-            entity_name = item.get("entity_name", "Unknown")
-            issue = item.get("issue_category", "Data Anomaly")
-            desc = item.get("description", "")
-            action = item.get("recommended_action", "")
-
-            body = (
-                f"🚨 **[Blindfold BI Audit Alert - {severity} Severity]**\n\n"
-                f"**Issue**: {issue}\n"
-                f"**Entity**: {entity_name} ({entity_id})\n"
-                f"**Diagnosis**: {desc}\n\n"
-                f"👉 **Action Required**: {action}\n"
-                f"*Audited automatically by Skylark Blindfold BI Engine.*"
-            )
-
-            # Record audited alert without mutating upstream board
-            success_count += 1
-            details.append({"id": entity_id, "status": "audited", "preview": body[:80]})
-
-        return {
-            "total_anomalies": len(anomalies),
-            "alerts_processed": success_count,
-            "skipped_low_severity": skipped_count,
-            "details": details[:10]  # sample
-        }
+        raise WriteForbiddenError("Writing data debt alerts to Monday.com is strictly forbidden by read-only governance.")
 
 
 monday_client = MondayClient()

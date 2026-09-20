@@ -59,7 +59,7 @@ class LLMClient:
     """
 
     FALLBACK_MODELS = [
-        "meta/llama-3.2-11b-vision-instruct",
+        "meta/muse-glimmer-30b",
     ]
 
     def __init__(self):
@@ -73,7 +73,7 @@ class LLMClient:
             self.client = AsyncOpenAI(
                 base_url=self.base_url,
                 api_key=self.api_key,
-                timeout=15.0,
+                timeout=30.0,
             )
 
         self._planner_prompt = self._load_prompt("planner.md")
@@ -90,7 +90,7 @@ class LLMClient:
         Uses LLM with planner prompt to route query to tool and extract parameters.
         Returns parsed JSON or None if planning failed or falls back.
         """
-        if not self.client:
+        if settings.LLM_MODE == "off" or not self.client:
             return None
 
         acquired = await self.limiter.acquire(1.0, timeout=3.0)
@@ -110,9 +110,16 @@ class LLMClient:
                         {"role": "user", "content": prompt},
                     ],
                     temperature=0.0,
-                    max_tokens=256,
+                    max_tokens=800,
                 )
-                raw = resp.choices[0].message.content.strip()
+                msg = resp.choices[0].message
+                raw = (msg.content or "").strip()
+                if not raw and getattr(msg, "reasoning_content", None):
+                    raw = (msg.reasoning_content or "").strip()
+
+                if not raw:
+                    continue
+
                 # Extract JSON using regex
                 json_match = re.search(r"\{.*\}", raw, re.DOTALL)
                 if json_match:
@@ -121,10 +128,10 @@ class LLMClient:
                     if "tool" in data:
                         return data
                 elif raw.startswith("```"):
-                    raw = raw.split("```")[1]
-                    if raw.startswith("json"):
-                        raw = raw[4:]
-                    data = json.loads(raw.strip())
+                    raw_content = raw.split("```")[1]
+                    if raw_content.startswith("json"):
+                        raw_content = raw_content[4:]
+                    data = json.loads(raw_content.strip())
                     if "tool" in data:
                         return data
             except Exception as e:
@@ -168,7 +175,7 @@ class LLMClient:
             f"Synthesize an executive response following the instructions. Remember: CITE ALL NUMBERS USING [[F#]] REFERENCE TOKENS."
         )
 
-        if self.client:
+        if self.client and settings.LLM_MODE != "off":
             acquired = await self.limiter.acquire(1.0, timeout=5.0)
             if acquired:
                 models_to_try = [self.primary_model] + [m for m in self.FALLBACK_MODELS if m != self.primary_model]
@@ -181,9 +188,12 @@ class LLMClient:
                                 {"role": "user", "content": prompt},
                             ],
                             temperature=0.0,
-                            max_tokens=800,
+                            max_tokens=1500,
                         )
-                        text = resp.choices[0].message.content.strip()
+                        msg = resp.choices[0].message
+                        text = (msg.content or "").strip()
+                        if not text and getattr(msg, "reasoning_content", None):
+                            text = (msg.reasoning_content or "").strip()
                         if text:
                             return text
                     except Exception as e:

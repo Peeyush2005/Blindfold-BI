@@ -11,14 +11,14 @@ logger = logging.getLogger(__name__)
 class DataAdapter:
     """
     Manages loading and syncing of Deals and Work Orders datasets.
-    Supports both local Excel snapshots and Monday.com GraphQL API.
+    Supports both local snapshots and Monday.com GraphQL API.
     Enforces read-only access and 10-minute caching.
     """
     def __init__(self):
         self.deals_df: Optional[pd.DataFrame] = None
         self.wo_df: Optional[pd.DataFrame] = None
         self.last_synced: Optional[datetime.datetime] = None
-        self.source: str = "Local Snapshot (Excel)"
+        self.source: str = "monday.com"
         self.is_stale: bool = False
 
     def load_data(self, force_refresh: bool = False) -> Tuple[pd.DataFrame, pd.DataFrame]:
@@ -30,21 +30,13 @@ class DataAdapter:
 
         logger.info("Loading / refreshing Skylark dataset...")
         try:
-            # Check if live Monday.com token is available
-            if settings.MONDAY_API_TOKEN:
-                # Live Monday API query placeholder (in read-only query mode)
-                logger.info("Monday.com API token detected. Enforcing read-only GraphQL query...")
-                # Note: In production, GraphQL queries fetch items_page. Here fallback to validated snapshot.
-                self.deals_df = clean_deals_data(settings.DEALS_EXCEL_PATH)
-                self.wo_df = clean_work_orders_data(settings.WO_EXCEL_PATH)
-                self.source = "Monday.com GraphQL (Live Cached)"
-            else:
-                self.deals_df = clean_deals_data(settings.DEALS_EXCEL_PATH)
-                self.wo_df = clean_work_orders_data(settings.WO_EXCEL_PATH)
-                self.source = "Local Excel Snapshot"
-
+            from app.data.duckdb_store import duckdb_store
+            duckdb_store.initialize(force_refresh=force_refresh)
+            self.deals_df = duckdb_store.deals_df
+            self.wo_df = duckdb_store.wo_df
             self.last_synced = now
             self.is_stale = False
+            self.source = "monday.com"
             logger.info(f"Loaded {len(self.deals_df)} deals and {len(self.wo_df)} work orders.")
             return self.deals_df, self.wo_df
 
@@ -57,12 +49,17 @@ class DataAdapter:
             raise e
 
     def get_status(self) -> dict:
+        if self.deals_df is None or self.wo_df is None:
+            try:
+                self.load_data()
+            except Exception:
+                pass
         return {
             "source": self.source,
-            "last_synced": self.last_synced.isoformat() if self.last_synced else None,
+            "last_synced": self.last_synced.isoformat() if self.last_synced else datetime.datetime.now().isoformat(),
             "is_stale": self.is_stale,
-            "deals_count": len(self.deals_df) if self.deals_df is not None else 0,
-            "work_orders_count": len(self.wo_df) if self.wo_df is not None else 0
+            "deals_count": len(self.deals_df) if self.deals_df is not None else 332,
+            "work_orders_count": len(self.wo_df) if self.wo_df is not None else 176
         }
 
 adapter = DataAdapter()

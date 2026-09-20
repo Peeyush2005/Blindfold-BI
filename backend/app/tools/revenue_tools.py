@@ -491,12 +491,23 @@ def sector_performance(
         row_count=len(rows),
     )
 
+    dq_entries = [
+        DQEntry(
+            code="ASSUMPTION",
+            rule_name="Energy Sector Grouping",
+            severity="LOW",
+            affected_count=0,
+            description="Energy sector includes Power, Renewables, and Utilities per Section 3.6 governance.",
+            resolution="Cross-board grouping harmonized across deals and work orders.",
+        )
+    ]
+
     return ToolResult(
         tool="sector_performance",
         facts=facts,
         tables=[tbl],
         charts=[chart],
-        dq=[],
+        dq=dq_entries,
         followups=[],
         template=template,
         audit=receipt,

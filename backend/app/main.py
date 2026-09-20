@@ -1,138 +1,178 @@
-import io
-import csv
+"""
+Blindfold BI - Skylark Drones
+Production ASGI Application with Versioned v1 API, Health Probes, and MCP Server.
+"""
+
+import time
+import uuid
+import logging
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse
 
 from app.config import settings
 from app.data.adapter import adapter
 from app.data.db import db
 from app.core.orchestrator import orchestrator
-from app.core.anonymizer import blindfold
-from app.models.schemas import ChatRequest, ChatResponse, DashboardOverview, DataDebtItem
-from app.tools.pipeline_tools import get_pipeline_summary
-from app.tools.revenue_tools import get_revenue_realization_summary
-from app.tools.operations_tools import get_work_order_health, get_cross_board_conversion, get_data_debt_report
-from app.tools.executive_tools import get_executive_brief
-from app.api.monday_routes import router as monday_router
-from app.api.chat import router as chat_router
-from app.tools.registry import tools_router, registry
+from app.tools.registry import registry
+from app.api.v1 import api_v1_router
+from app.api.v1.deps import ProblemException, problem_json_response
+
+# Structured logging setup
+logging.basicConfig(
+    level=logging.INFO,
+    format='{"time": "%(asctime)s", "level": "%(levelname)s", "module": "%(name)s", "message": "%(message)s"}',
+)
+logger = logging.getLogger("blindfold.api")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: Load datasets into DuckDB and initialize Blindfold Privacy Gateway
+    # Startup: Initialize DuckDB and Blindfold Privacy Gateway catalogs
+    logger.info("Initializing DuckDB analytic tables...")
     db.init_db()
+    logger.info("Initializing DataAdapter snapshot...")
+    adapter.load_data()
+    logger.info("Initializing Blindfold Privacy Gateway surrogate catalogs...")
     orchestrator.init_catalog()
     yield
-    # Shutdown: Clean up if necessary
+    # Graceful shutdown
+    logger.info("Shutting down Blindfold BI service...")
+
 
 app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
-    description="Privacy-First Blindfold Conversational BI & Executive Dashboard for Skylark Drones",
-    lifespan=lifespan
+    description=(
+        "Minimal, live, API-first Conversational Business Intelligence platform for Skylark Drones.\n\n"
+        "Features:\n"
+        "- Zero LLM access to raw commercial datasets\n"
+        "- Numbers-by-reference fact grounding with strict verification\n"
+        "- Real-time 8-stage pipeline event streaming over SSE\n"
+        "- Model Context Protocol (MCP) tool server\n"
+        "- Strict read-only governance over monday.com boards"
+    ),
+    docs_url="/docs",
+    redoc_url="/redoc",
+    openapi_url="/openapi.json",
+    lifespan=lifespan,
 )
 
-# Setup CORS
+# CORS allow-list configuration
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Request-ID", "Content-Type"],
 )
 
-app.include_router(monday_router)
-app.include_router(tools_router)
-app.include_router(chat_router)
 
+# Request ID and Structured Logging Middleware
+@app.middleware("http")
+async def request_tracing_middleware(request: Request, call_next):
+    request_id = request.headers.get("X-Request-ID") or f"req_{uuid.uuid4().hex[:12]}"
+    t0 = time.time()
+
+    response: Response = await call_next(request)
+
+    latency_ms = round((time.time() - t0) * 1000, 2)
+    response.headers["X-Request-ID"] = request_id
+
+    # Structured access log without logging raw payloads or row data
+    logger.info(
+        f'{{"request_id": "{request_id}", "method": "{request.method}", "path": "{request.url.path}", '
+        f'"status": {response.status_code}, "latency_ms": {latency_ms}}}'
+    )
+    return response
+
+
+# RFC 7807 Problem Exception Handler
+@app.exception_handler(ProblemException)
+async def problem_exception_handler(request: Request, exc: ProblemException):
+    return problem_json_response(
+        status_code=exc.status_code,
+        title=exc.title,
+        detail=exc.detail,
+        code=exc.code,
+        instance=request.url.path,
+    )
+
+
+# Mount Versioned v1 API
+app.include_router(api_v1_router)
+
+# Mount MCP Server if available
 if registry.mcp_server is not None:
-    app.mount("/mcp", registry.mcp_server.sse_app())
+    try:
+        app.mount("/mcp", registry.mcp_server.sse_app())
+        logger.info("Mounted MCP server at /mcp")
+    except Exception as e:
+        logger.warning(f"Failed to mount FastMCP SSE app: {e}")
 
-@app.get("/health")
-def health():
+
+# -----------------------------------------------------------------------------
+# Cloud-Native Health & Readiness Probes
+# -----------------------------------------------------------------------------
+
+@app.get(
+    "/healthz",
+    tags=["Probes"],
+    summary="Liveness Probe",
+    description="Kubernetes/container liveness probe confirming the HTTP server is responsive.",
+)
+async def healthz():
     return {
-        "status": "healthy",
+        "status": "ok",
         "app": settings.APP_NAME,
         "version": settings.APP_VERSION,
-        "data_status": adapter.get_status(),
-        "privacy_gateway": {
-            "status": "ACTIVE",
-            "registered_entities": len(blindfold.entity_to_token),
-            "pii_leaked_to_llm": 0
-        },
-        "llm_provider": {
-            "endpoint": settings.NVIDIA_BASE_URL,
-            "model": settings.NVIDIA_MODEL,
-            "connected": bool(settings.NVIDIA_API_KEY)
-        }
+        "timestamp": time.time(),
     }
 
-@app.get("/api/dashboard", response_model=DashboardOverview)
-def get_dashboard():
-    pipe = get_pipeline_summary()
-    rev = get_revenue_realization_summary()
-    conv = get_cross_board_conversion()
-    health = get_work_order_health()
-    debt = get_data_debt_report()
 
-    # Financial Waterfall Categories
-    waterfall = [
-        {"name": "Contracted", "value": rev["summary"]["contracted_amount_excl_gst"], "type": "total"},
-        {"name": "Billed", "value": rev["summary"]["billed_amount_excl_gst"], "type": "subtotal"},
-        {"name": "Collected", "value": rev["summary"]["collected_amount_incl_gst"], "type": "cash"},
-        {"name": "Unbilled Backlog", "value": rev["summary"]["unbilled_backlog_excl_gst"], "type": "backlog"},
-        {"name": "Receivables", "value": rev["summary"]["outstanding_receivables"], "type": "receivable"}
-    ]
-
-    return DashboardOverview(
-        pipeline_value=pipe["summary"]["total_pipeline_value"],
-        weighted_pipeline_value=pipe["summary"]["total_weighted_pipeline"],
-        won_deal_value=2305518040.91,  # Ground truth aggregate
-        wo_contracted_value=rev["summary"]["contracted_amount_excl_gst"],
-        wo_billed_value=rev["summary"]["billed_amount_excl_gst"],
-        wo_collected_value=rev["summary"]["collected_amount_incl_gst"],
-        wo_receivable_value=rev["summary"]["outstanding_receivables"],
-        wo_unbilled_backlog=rev["summary"]["unbilled_backlog_excl_gst"],
-        realization_rate_pct=rev["summary"]["realization_rate_pct"],
-        collection_efficiency_pct=rev["summary"]["collection_efficiency_pct"],
-        deal_to_wo_conversion_pct=conv["conversion_rate_pct"],
-        data_debt_count=debt["total_debt_records"],
-        funnel_stages=pipe.get("by_stage", []),
-        sector_breakdown=rev.get("by_sector", []),
-        financial_waterfall=waterfall,
-        execution_breakdown=health.get("execution_breakdown", [])
-    )
-
-@app.get("/api/data-debt")
-def get_data_debt():
-    return get_data_debt_report()
-
-@app.get("/api/data-debt/export")
-def export_data_debt():
-    report = get_data_debt_report()
-    records = report.get("records", [])
-
-    output = io.StringIO()
-    writer = csv.DictWriter(output, fieldnames=["id", "type", "entity_name", "owner", "sector", "issue_category", "severity", "description", "recommended_action"])
-    writer.writeheader()
-    for r in records:
-        writer.writerow(r)
-
-    output.seek(0)
-    return StreamingResponse(
-        io.BytesIO(output.getvalue().encode("utf-8")),
-        media_type="text/csv",
-        headers={"Content-Disposition": "attachment; filename=skylark_data_debt_remediation.csv"}
-    )
-
-@app.post("/api/data/refresh")
-def refresh_data():
-    db.init_db(force_refresh=True)
-    orchestrator.init_catalog()
-    return {
-        "status": "success",
-        "message": "Data refreshed from source",
-        "details": adapter.get_status()
+@app.get(
+    "/readyz",
+    tags=["Probes"],
+    summary="Readiness Probe",
+    description="Kubernetes/container readiness probe confirming DuckDB, snapshot data, metric contracts, and LLM are ready to serve traffic.",
+)
+async def readyz():
+    checks = {
+        "duckdb": db.store.con is not None and db.store.initialized,
+        "data_snapshot": (adapter.deals_df is not None and adapter.wo_df is not None),
+        "metric_contracts": bool(orchestrator.contract_manager.metrics),
+        "llm_configuration": bool(settings.NVIDIA_API_KEY) or (settings.LLM_MODE == "off"),
     }
+
+    is_ready = all(checks.values())
+    status_code = status.HTTP_200_OK if is_ready else status.HTTP_503_SERVICE_UNAVAILABLE
+
+    content = {
+        "status": "ready" if is_ready else "not_ready",
+        "checks": checks,
+        "as_of_date": settings.AS_OF_DATE,
+        "source": "monday.com",
+    }
+
+    if not is_ready:
+        return JSONResponse(
+            status_code=status_code,
+            content={
+                "type": "https://api.skylark.ai/errors/NOT_READY",
+                "title": "Service Not Ready",
+                "status": status_code,
+                "detail": "One or more readiness dependencies are unavailable.",
+                "code": "NOT_READY",
+                "checks": checks,
+            },
+        )
+
+    return JSONResponse(status_code=status_code, content=content)
+
+
+# Backwards compatibility /health endpoint
+@app.get("/health", include_in_schema=False)
+async def legacy_health():
+    return await healthz()
