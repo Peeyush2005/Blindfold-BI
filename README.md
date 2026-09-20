@@ -4,7 +4,19 @@ Conversational Business Intelligence platform for Skylark Drones. Operates as an
 
 ---
 
-## 1. System Architecture
+## 1. Live Deployments & Endpoints
+
+| Resource | URL | Description |
+|---|---|---|
+| **Production Web UI** | [https://mango-plant-08ea0340f.1.azurestaticapps.net](https://mango-plant-08ea0340f.1.azurestaticapps.net) | Single-screen conversational interface on Azure Static Web Apps |
+| **Production API Gateway** | [https://skylark-bi-api.orangecliff-665a6258.centralus.azurecontainerapps.io](https://skylark-bi-api.orangecliff-665a6258.centralus.azurecontainerapps.io) | Autoscaling FastAPI async engine on Azure Container Apps |
+| **Interactive API Docs** | [https://skylark-bi-api.orangecliff-665a6258.centralus.azurecontainerapps.io/docs](https://skylark-bi-api.orangecliff-665a6258.centralus.azurecontainerapps.io/docs) | Interactive Swagger UI documentation |
+| **OpenAPI Specification** | [https://skylark-bi-api.orangecliff-665a6258.centralus.azurecontainerapps.io/openapi.json](https://skylark-bi-api.orangecliff-665a6258.centralus.azurecontainerapps.io/openapi.json) | Complete OpenAPI 3.1 contract |
+| **Model Context Protocol (MCP)** | `https://skylark-bi-api.orangecliff-665a6258.centralus.azurecontainerapps.io/mcp` | JSON-RPC 2.0 endpoint for MCP-compatible clients |
+
+---
+
+## 2. System Architecture
 
 The platform architecture completely separates data privacy, analytical computation, and natural language synthesis into distinct layers:
 
@@ -38,7 +50,7 @@ The platform architecture completely separates data privacy, analytical computat
      └─────────────────────────────────────┘  └───────────────────────────────┘
 ```
 
-### 1.1 Single-Screen Web Interface
+### 2.1 Single-Screen Web Interface
 - **Source Badge**: Displays live connection status: `monday.com · synced HH:MM · as of 15 Jan 2026`. If the backend is unreachable, it indicates `source disconnected · offline` and presents an error banner.
 - **Empty State**: Displays 4 to 6 starter suggestion chips for key operational questions.
 - **Live Run Panel**: Visualizes pipeline stages in real time (`understand`, `plan`, `fetch`, `normalize`, `compute`, `narrate`, `verify`, `finalize`). Upon completion, it automatically collapses into a single summary line (`8 stages · 2.4s · 1 tool · 9 rows`) with an explicit `Replay` button.
@@ -51,7 +63,7 @@ The platform architecture completely separates data privacy, analytical computat
   - `receipt`: Audit trail displaying SQL query executed, rows scanned, exclusions, and latency.
   - `chips`: Contextual follow-up suggestions.
 
-### 1.2 Deterministic Analytical Tools Engine
+### 2.2 Deterministic Analytical Tools Engine
 All metric computations are executed by DuckDB SQL templates. The LLM never performs arithmetic:
 - **Pipeline Summary**: Evaluates 49 open deals (₹68.82 Cr), detects tender outlier concentration (77.3%), and isolates non-tender pipeline (₹15.62 Cr).
 - **Revenue Realization Ladder**: Tracks 176 operational work orders: Contracted value excluding GST (₹21.16 Cr), Billed revenue excluding GST (₹10.74 Cr), Realization rate (50.74%), Cash collected including GST (₹9.04 Cr), and Net receivables (₹3.63 Cr).
@@ -60,7 +72,28 @@ All metric computations are executed by DuckDB SQL templates. The LLM never perf
 
 ---
 
-## 2. monday.com Integration & Read-Only Governance
+## 3. Canonical Tools Catalog
+
+| Tool Name | Scope & Function | Ground Truth Facts |
+|---|---|---|
+| `pipeline_summary` | Open commercial pipeline aggregation & outlier isolation | 49 open deals, ₹68.82 Cr total pipeline, ₹15.62 Cr non-tender |
+| `revenue_waterfall` | Realization ladder from contracted to collected cash | ₹21.16 Cr contracted (excl. GST), ₹10.74 Cr billed (excl. GST), ₹9.04 Cr collected (incl. GST) |
+| `sector_performance` | Cross-board analysis across 9 canonical sectors | Energy grouping (Power, Renewables, Utilities) |
+| `data_debt_ledger` | Systemic audits across DQ001 through DQ016 | 11 negative credit note adjustments, 15 ₹0 billed completed orders |
+| `credit_risk` | Net receivables & payment exposure by account | ₹3.63 Cr net receivables across 11 credit rows |
+| `aging_analysis` | Aging distribution of uncollected invoices | Breakdown across 0-30, 31-60, 61-90, 90+ days |
+| `client_concentration` | Revenue & pipeline concentration by top accounts | Top counterparty exposure and dependency ratios |
+| `deal_slippage` | Close-date slippage and stale deal analysis | Identification of deals slipping across quarters |
+| `collection_efficiency` | Cash collection velocity vs. contractual billing terms | Ratio of collections to billings across work orders |
+| `margin_analysis` | Service line profitability and operational margin | Work order execution cost vs. billed revenue |
+| `conversion_velocity` | Win rates and cycle time by deal stage | Realized win metrics across 64 valued won deals (₹9.50 Cr) |
+| `unbilled_exposure` | Operational work orders with zero invoicing | 15 completed orders with ₹0 billed |
+| `reconciliation_ledger` | Billing vs. collection ledger balancing | Net ledger variance audits |
+| `cross_board_linkage` | Sector-level commercial-to-operational reconciliation | Refuses direct key joins (DQ015); aggregates at sector level |
+
+---
+
+## 4. monday.com Integration & Read-Only Governance
 
 Blindfold BI interfaces with monday.com boards through its GraphQL v2 API:
 - **Deals Funnel Board**: Synchronizes commercial opportunity stages, probability weights, values, and close dates.
@@ -74,7 +107,7 @@ Blindfold BI interfaces with monday.com boards through its GraphQL v2 API:
 
 ---
 
-## 3. Environment Variables
+## 5. Environment Variables
 
 The application is configured using environment variables in `backend/.env` or system environment:
 
@@ -94,13 +127,13 @@ For the frontend (`frontend/.env`):
 
 | Variable | Type | Default | Description |
 |---|---|---|---|
-| `VITE_API_BASE` | string | `http://127.0.0.1:8000` | Backend API base URL |
+| `VITE_API_BASE` | string | `http://127.0.0.1:8000` | Backend API base URL (set to Azure Container App URL in prod) |
 
 ---
 
-## 4. API Overview
+## 6. API Overview
 
-### 4.1 REST Endpoints
+### 6.1 REST Endpoints
 
 | Method | Endpoint | Auth | Description |
 |---|---|---|---|
@@ -116,7 +149,7 @@ For the frontend (`frontend/.env`):
 | `GET` | `/readyz` | None | Readiness check (validates database and configuration) |
 | `POST` | `/mcp` | None | Model Context Protocol JSON-RPC 2.0 endpoint |
 
-### 4.2 Server-Sent Events (SSE) Protocol
+### 6.2 Server-Sent Events (SSE) Protocol
 
 Streaming responses from `POST /api/v1/chat` emit typed JSON events:
 
@@ -132,13 +165,55 @@ Streaming responses from `POST /api/v1/chat` emit typed JSON events:
 
 ---
 
-## 5. Local Setup & Verification
+## 7. Cloud Deployment (Microsoft Azure)
+
+The production stack is deployed across Azure infrastructure:
+- **Frontend**: Azure Static Web Apps (`skylark-bi-frontend` in `rg-blindfold-bi-central`) serving the compiled React 19 single-screen bundle at [https://mango-plant-08ea0340f.1.azurestaticapps.net](https://mango-plant-08ea0340f.1.azurestaticapps.net).
+- **Backend API**: Azure Container Apps (`skylark-bi-api` in `rg-blindfold-bi-central`) running FastAPI at [https://skylark-bi-api.orangecliff-665a6258.centralus.azurecontainerapps.io](https://skylark-bi-api.orangecliff-665a6258.centralus.azurecontainerapps.io).
+- **Container Registry**: Azure Container Registry (`skylarkbicr.azurecr.io`).
+
+### 7.1 Automated CI/CD via GitHub Actions
+
+The repository includes `.github/workflows/deploy-azure.yml` which automatically triggers on every push to `main`:
+1. **Quality Gate**: Runs backend pytest evals with zero-math-drift assertions and builds the React bundle.
+2. **Deploy UI**: Deploys the frontend to Azure Static Web Apps using `AZURE_STATIC_WEB_APPS_API_TOKEN`.
+3. **Deploy Backend**: Builds the Docker container via Azure Container Registry and updates the Azure Container App using `ACR_PASSWORD` and `AZURE_CREDENTIALS`.
+
+To configure automatic deployments, add the following secrets in GitHub (**Settings > Secrets and variables > Actions**):
+- `AZURE_STATIC_WEB_APPS_API_TOKEN`: Deployment token from `az staticwebapp secrets list --name skylark-bi-frontend --resource-group rg-blindfold-bi-central`.
+- `ACR_PASSWORD`: Access password from `az acr credential show --name skylarkbicr`.
+- `AZURE_CREDENTIALS`: Service principal credentials from `az ad sp create-for-rbac`.
+
+### 7.2 Manual CLI Deployment
+
+Deployments can also be executed directly via Azure CLI:
+
+```bash
+# 1. Build & Deploy Backend Container
+az acr build --registry skylarkbicr --image skylark-backend:latest .
+az containerapp update \
+  --name skylark-bi-api \
+  --resource-group rg-blindfold-bi-central \
+  --image skylarkbicr.azurecr.io/skylark-backend:latest
+
+# 2. Build & Deploy Frontend Client
+cd frontend
+VITE_API_BASE="https://skylark-bi-api.orangecliff-665a6258.centralus.azurecontainerapps.io" npm run build
+npx @azure/static-web-apps-cli deploy ./dist \
+  --app-name skylark-bi-frontend \
+  --resource-group rg-blindfold-bi-central \
+  --env production
+```
+
+---
+
+## 8. Local Setup & Verification
 
 ### Prerequisites
 - Python 3.12 or 3.13
 - Node.js 20+ and npm
 
-### 5.1 Backend Setup
+### 8.1 Backend Setup
 ```bash
 cd backend
 python3 -m venv .venv
@@ -149,7 +224,7 @@ pip install -r requirements.txt
 python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-### 5.2 Frontend Setup
+### 8.2 Frontend Setup
 ```bash
 cd frontend
 npm install
@@ -157,13 +232,13 @@ npm run build
 npm run preview -- --host 127.0.0.1 --port 3000
 ```
 
-### 5.3 Running Local Continuous Integration
+### 8.3 Running Local Continuous Integration
 Execute the local CI verification script to check repository hygiene, read-only rules, unit tests, and production build:
 ```bash
 ./scripts/ci_local.sh
 ```
 
-### 5.4 Running Acceptance Tests
+### 8.4 Running Acceptance Tests
 1. **Real-Time Stream Verification**:
    ```bash
    curl -N -X POST http://127.0.0.1:8000/api/v1/chat \
