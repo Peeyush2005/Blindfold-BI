@@ -14,6 +14,12 @@ from pydantic import BaseModel, Field
 # Core Pydantic Contracts (Section 5.4)
 # -------------------------------------------------------------------------
 
+FactRole = Literal["primary", "support", "caveat"]
+NarrationSource = Literal["llm", "llm_repaired", "template"]
+TemplateReason = Literal["no_api_key", "llm_error", "verifier_rejected", "llm_mode_off"]
+TaskType = Literal["lookup", "compare", "rank", "trend", "diagnose", "summarize"]
+
+
 class Fact(BaseModel):
     id: str                                                 # e.g. "F1", "F2"
     metric: str                                             # contract metric key, e.g. "open_pipeline_value"
@@ -26,6 +32,7 @@ class Fact(BaseModel):
     n_missing: Optional[int] = None                         # rows lacking the needed field
     caveat_codes: List[str] = Field(default_factory=list)   # DQ codes touching this fact (e.g. ["DQ007"])
     must_mention: bool = False
+    role: FactRole = "support"
 
 
 class Table(BaseModel):
@@ -108,6 +115,33 @@ class Receipt(BaseModel):
     definitions: List[Dict[str, Any]] = Field(default_factory=list)
     llm: List[Dict[str, Any]] = Field(default_factory=list)
     verifier: Dict[str, Any] = Field(default_factory=dict)
+    model: Optional[str] = None
+    llm_called: bool = False
+    narration_source: NarrationSource = "template"
+    template_reason: Optional[TemplateReason] = None
+
+
+class StructuredIntent(BaseModel):
+    task: TaskType = "lookup"
+    metrics: List[str] = Field(default_factory=list)
+    filters: Dict[str, Any] = Field(default_factory=dict)
+    group_by: Optional[str] = None
+    top_n: Optional[int] = None
+    compare_to: Optional[str] = None
+    need_chart: bool = True
+    ambiguous_arguments: List[str] = Field(default_factory=list)
+    clarification_chips: List[ChipCandidate] = Field(default_factory=list)
+    is_out_of_scope: bool = False
+    out_of_scope_message: Optional[str] = None
+    tool_name: Optional[str] = None
+    tool_args: Dict[str, Any] = Field(default_factory=dict)
+
+
+class NarrationResponse(BaseModel):
+    answer: str = ""
+    evidence: List[str] = Field(default_factory=list)
+    caveats: List[str] = Field(default_factory=list)
+    follow_ups: List[str] = Field(default_factory=list)
 
 
 # -------------------------------------------------------------------------

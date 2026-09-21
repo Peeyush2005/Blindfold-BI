@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from typing import Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
@@ -43,6 +44,11 @@ class Settings(BaseSettings):
     LLM_MODE: str = os.getenv("LLM_MODE", "on")
     RATE_LIMIT_PER_MINUTE: int = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
     AS_OF_DATE: str = "15 Jan 2026"
+    ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
+    API_KEY_PEPPER: str = os.getenv("API_KEY_PEPPER", "dev-pepper-blindfold-bi-secret-32b")
+    ADMIN_TOKEN: str = os.getenv("ADMIN_TOKEN", "dev-admin-token-super-secret-12345")
+    AZURE_STORAGE_CONNECTION_STRING: Optional[str] = os.getenv("AZURE_STORAGE_CONNECTION_STRING", None)
+    AZURE_STORAGE_CONTAINER: str = os.getenv("AZURE_STORAGE_CONTAINER", "blindfold-keys")
 
     # CORS
     CORS_ORIGINS: list[str] = ["*"]

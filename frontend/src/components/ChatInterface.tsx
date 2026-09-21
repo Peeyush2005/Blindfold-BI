@@ -2,7 +2,6 @@ import { useState, useEffect, useRef } from 'react';
 import { Send, AlertCircle, Sparkles } from 'lucide-react';
 import { apiUrl } from '../apiConfig';
 import type {
-  StarterChip,
   AnswerPayload,
   StageState,
   ToolEventData,
@@ -39,11 +38,81 @@ interface ChatMessage {
   answer?: AnswerPayload;
 }
 
-export const ChatInterface: React.FC = () => {
+interface ChatInterfaceProps {
+  triggerQuery?: string | null;
+  onQueryTriggered?: () => void;
+}
+
+const STARTER_CATEGORIES = [
+  {
+    title: 'Pipeline',
+    chips: [
+      {
+        label: 'Open Pipeline Overview',
+        query: "How's our pipeline looking for the energy sector this quarter?",
+        desc: 'Energy cluster open pipeline in Q4 FY25-26',
+      },
+      {
+        label: 'Top Open Pipeline Sector',
+        query: 'Which sector has the biggest open pipeline?',
+        desc: 'Rank sectors by open pipeline valuation',
+      },
+    ],
+  },
+  {
+    title: 'Revenue',
+    chips: [
+      {
+        label: 'Revenue Realization Ladder',
+        query: 'What did we bill against contracted value?',
+        desc: 'Bookings to billing and cash waterfall',
+      },
+      {
+        label: 'Cash Collections & Balance',
+        query: 'How much cash have we collected?',
+        desc: 'Bank collections and outstanding balance',
+      },
+    ],
+  },
+  {
+    title: 'Operations',
+    chips: [
+      {
+        label: 'Active Work Orders Health',
+        query: 'Which work orders are still ongoing?',
+        desc: 'Incomplete project status and delivery dates',
+      },
+      {
+        label: 'Deals to Orders Linkage',
+        query: 'Can we join deals and work orders?',
+        desc: 'Cross-board keyless audit (DQ015)',
+      },
+    ],
+  },
+  {
+    title: 'Data Quality',
+    chips: [
+      {
+        label: 'Data Quality Scorecard',
+        query: 'How healthy is our data?',
+        desc: 'Audit CRM and Work Order anomalies',
+      },
+      {
+        label: 'Stale Pipeline Deals',
+        query: 'Any stale open deals?',
+        desc: 'Deals inactive for >90 days in open pipeline',
+      },
+    ],
+  },
+];
+
+export const ChatInterface: React.FC<ChatInterfaceProps> = ({
+  triggerQuery,
+  onQueryTriggered,
+}) => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputQuery, setInputQuery] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [starterChips, setStarterChips] = useState<StarterChip[]>([]);
   const [apiError, setApiError] = useState<string | null>(null);
   const [liveAriaStatus, setLiveAriaStatus] = useState<string>('Ready');
 
@@ -58,24 +127,32 @@ export const ChatInterface: React.FC = () => {
     scrollToBottom();
   }, [messages, isLoading]);
 
-  // Fetch starter chips from API on mount
+  // Trigger programmatic query if passed from parent (e.g. Info tab "Ask the agent" links)
   useEffect(() => {
-    const fetchStarterChips = async () => {
+    if (triggerQuery && triggerQuery.trim() && !isLoading) {
+      handleSendMessage(triggerQuery.trim());
+      if (onQueryTriggered) {
+        onQueryTriggered();
+      }
+    }
+  }, [triggerQuery, isLoading]);
+
+  // Verify analytical API connectivity on mount
+  useEffect(() => {
+    const checkApiConnectivity = async () => {
       try {
         const res = await fetch(apiUrl('/api/v1/tools/starter-chips'));
         if (!res.ok) {
           throw new Error(`API responded with status ${res.status}`);
         }
-        const chips: StarterChip[] = await res.json();
-        setStarterChips(chips);
         setApiError(null);
       } catch (err: any) {
-        console.error('Failed to load starter chips from API:', err);
-        setApiError('API unreachable: Unable to load suggestion chips from analytical server.');
+        console.error('Failed to verify API connectivity:', err);
+        setApiError('API unreachable: Unable to connect to analytical server.');
       }
     };
 
-    fetchStarterChips();
+    checkApiConnectivity();
   }, []);
 
   const handleSendMessage = async (queryText: string, chipText?: string) => {
@@ -318,7 +395,7 @@ export const ChatInterface: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col h-[calc(100vh-4.5rem)] max-w-4xl mx-auto w-full px-4 text-slate-200">
+    <div className="flex flex-col h-[calc(100vh-4.5rem)] max-w-[760px] mx-auto w-full px-4 text-slate-200">
       {/* Hidden aria-live announcer for screen reader accessibility */}
       <div className="sr-only" aria-live="polite" aria-atomic="true">
         {liveAriaStatus}
@@ -338,40 +415,45 @@ export const ChatInterface: React.FC = () => {
       {/* Messages Scroll Area or Empty State */}
       <div className="flex-1 overflow-y-auto py-4 space-y-6">
         {messages.length === 0 ? (
-          <div className="h-full flex flex-col justify-center items-center text-center px-4">
-            <div className="w-10 h-10 rounded-md bg-slate-800 border border-slate-700 flex items-center justify-center text-sky-400 mb-4">
+          <div className="h-full flex flex-col justify-center items-center text-center px-2 py-6">
+            <div className="w-10 h-10 rounded-md bg-slate-800 border border-slate-700 flex items-center justify-center text-sky-400 mb-3">
               <Sparkles className="w-5 h-5" />
             </div>
             <h1 className="text-xl font-medium text-slate-100 tracking-tight">
               Skylark Business Intelligence
             </h1>
             <p className="text-xs text-slate-400 mt-1.5 max-w-md">
-              Conversational analytics computed deterministically with DuckDB. All numbers are
-              grounded in verified tool results.
+              Ask any question about pipeline, revenue, work orders, and data hygiene.
             </p>
 
-            {/* Starter Suggestion Chips (4 to 6 chips from API) */}
-            {starterChips.length > 0 && (
-              <div className="mt-8 w-full max-w-xl">
-                <div className="text-[11px] font-medium text-slate-400 mb-2.5 uppercase tracking-wider">
-                  Suggested Queries
+            {/* Starter Suggestion Chips Grouped under Pipeline, Revenue, Operations, Data quality */}
+            <div className="mt-6 w-full space-y-4 text-left">
+              {STARTER_CATEGORIES.map((cat) => (
+                <div key={cat.title}>
+                  <div className="text-[11px] font-semibold text-slate-400 mb-1.5 uppercase tracking-wider px-1">
+                    {cat.title}
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {cat.chips.map((chip, idx) => (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => handleSendMessage(chip.query)}
+                        disabled={isLoading}
+                        className="p-2.5 text-left rounded-md border border-slate-800/90 bg-slate-900/60 hover:bg-slate-800/80 hover:border-slate-700 text-xs text-slate-300 hover:text-white transition-colors cursor-pointer group"
+                      >
+                        <div className="font-medium text-slate-200 group-hover:text-sky-300 transition-colors">
+                          {chip.label}
+                        </div>
+                        <div className="text-[11px] text-slate-400 mt-0.5 line-clamp-1">
+                          {chip.desc}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  {starterChips.map((chip, idx) => (
-                    <button
-                      key={idx}
-                      type="button"
-                      onClick={() => handleSendMessage('', chip.query || chip.label)}
-                      disabled={isLoading}
-                      className="p-3 text-left rounded-md border border-slate-800 bg-slate-900/60 hover:bg-slate-800/80 text-xs text-slate-300 hover:text-white transition-colors cursor-pointer"
-                    >
-                      <div className="font-medium text-slate-200">{chip.label}</div>
-                      <div className="text-[11px] text-slate-400 mt-0.5 truncate">{chip.reason || chip.query}</div>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
+              ))}
+            </div>
           </div>
         ) : (
           messages.map((msg) => (
@@ -394,6 +476,30 @@ export const ChatInterface: React.FC = () => {
                       isError={Boolean(msg.isError)}
                       degraded={Boolean(msg.degraded)}
                       onReplay={() => handleReplay(msg.id)}
+                      model={
+                        msg.answer?.receipt?.model ||
+                        (msg.llmCalls && msg.llmCalls.length > 0
+                          ? msg.llmCalls[msg.llmCalls.length - 1].model
+                          : undefined)
+                      }
+                      llmCalled={
+                        msg.answer?.receipt?.llm_called ??
+                        (msg.llmCalls && msg.llmCalls.length > 0
+                          ? msg.llmCalls.some((c) => c.llm_called)
+                          : undefined)
+                      }
+                      narrationSource={
+                        msg.answer?.receipt?.narration_source ||
+                        (msg.llmCalls && msg.llmCalls.length > 0
+                          ? msg.llmCalls[msg.llmCalls.length - 1].narration_source
+                          : undefined)
+                      }
+                      templateReason={
+                        msg.answer?.receipt?.template_reason ||
+                        (msg.llmCalls && msg.llmCalls.length > 0
+                          ? msg.llmCalls[msg.llmCalls.length - 1].template_reason
+                          : undefined)
+                      }
                     />
                   )}
 

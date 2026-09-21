@@ -20,7 +20,7 @@ STARTER_CHIPS: List[Dict[str, Any]] = [
         "label": "🌱 Energy Sector Pipeline",
         "tool": "pipeline_summary",
         "args": {"sector_group": "Energy"},
-        "reason": "Deep dive into Renewables, Powerline, and Utilities.",
+        "reason": "Deep dive into Renewables and Powerline cluster.",
     },
     {
         "id": "starter_3",
@@ -135,7 +135,7 @@ def generate_followup_chips(tool_name: str, args: Dict[str, Any], data: Dict[str
             label="🌱 Energy Sector Deep Dive",
             tool="pipeline_summary",
             args={"sector_group": "Energy"},
-            reason="Examine Renewables, Powerline, and Utilities cluster.",
+            reason="Examine Renewables and Powerline cluster.",
         ))
         chips.append(ChipCandidate(
             id="sec_tender",

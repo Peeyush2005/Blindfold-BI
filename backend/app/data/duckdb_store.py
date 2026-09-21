@@ -80,14 +80,14 @@ class DuckDBStore:
         self.con.execute("""
             CREATE OR REPLACE VIEW sector_reconciliation AS
             WITH canonical_list AS (
-                SELECT UNNEST(['Mining', 'Renewables', 'Power', 'Utilities', 'Infrastructure', 'Agriculture', 'Security & Surveillance', 'Tender', 'Other']) AS sector
+                SELECT UNNEST(['Mining', 'Renewables', 'Powerline', 'Utilities', 'Infrastructure', 'Agriculture', 'Security & Surveillance', 'Tender', 'Other']) AS sector
             ),
             canonical_deals AS (
                 SELECT
                     CASE
                         WHEN LOWER(sector) IN ('mining', 'quarry', 'mines', 'extraction', 'coal') THEN 'Mining'
                         WHEN LOWER(sector) IN ('renewables', 'solar', 'wind', 'green energy', 'pv') THEN 'Renewables'
-                        WHEN LOWER(sector) IN ('power', 'powerline', 'powerlines', 'transmission', 'substation', 'grid', 'electrical') THEN 'Power'
+                        WHEN LOWER(sector) IN ('powerline', 'power', 'powerlines', 'transmission', 'substation', 'grid', 'electrical') THEN 'Powerline'
                         WHEN LOWER(sector) IN ('utilities', 'utility', 'water', 'pipeline', 'gas') THEN 'Utilities'
                         WHEN LOWER(sector) IN ('infrastructure', 'infra', 'highways', 'roads', 'railways', 'urban', 'construction', 'smart city') THEN 'Infrastructure'
                         WHEN LOWER(sector) IN ('agriculture', 'agri', 'crop', 'plantation', 'farming') THEN 'Agriculture'
@@ -115,7 +115,7 @@ class DuckDBStore:
                     CASE
                         WHEN LOWER(sector) IN ('mining', 'quarry', 'mines', 'extraction', 'coal') THEN 'Mining'
                         WHEN LOWER(sector) IN ('renewables', 'solar', 'wind', 'green energy', 'pv') THEN 'Renewables'
-                        WHEN LOWER(sector) IN ('power', 'powerline', 'powerlines', 'transmission', 'substation', 'grid', 'electrical') THEN 'Power'
+                        WHEN LOWER(sector) IN ('powerline', 'power', 'powerlines', 'transmission', 'substation', 'grid', 'electrical') THEN 'Powerline'
                         WHEN LOWER(sector) IN ('utilities', 'utility', 'water', 'pipeline', 'gas') THEN 'Utilities'
                         WHEN LOWER(sector) IN ('infrastructure', 'infra', 'highways', 'roads', 'railways', 'urban', 'construction', 'smart city') THEN 'Infrastructure'
                         WHEN LOWER(sector) IN ('agriculture', 'agri', 'crop', 'plantation', 'farming') THEN 'Agriculture'

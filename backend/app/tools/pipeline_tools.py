@@ -57,7 +57,7 @@ def pipeline_summary(
     elif sector_group:
         grp = sector_group.strip().lower()
         if grp in ["energy", "energy_group", "energy cluster"]:
-            conditions.append("sector IN ('Renewables', 'Power', 'Powerline', 'Utilities')")
+            conditions.append("sector IN ('Renewables', 'Powerline')")
 
     if exclude_outliers:
         conditions.append("sector != 'Tender'")
@@ -144,6 +144,7 @@ def pipeline_summary(
             n_missing=agg["open_count"] - agg["with_value_count"],
             caveat_codes=["DQ007"] if tender_share_pct > 50 else [],
             must_mention=True,
+            role="primary",
         ),
         Fact(
             id="F2",
@@ -153,6 +154,7 @@ def pipeline_summary(
             unit="count",
             display=format_count(agg["open_count"], "deals"),
             n=agg["open_count"],
+            role="support",
         ),
         Fact(
             id="F3",
@@ -162,6 +164,7 @@ def pipeline_summary(
             unit="INR",
             display=format_inr(agg["weighted_value"]),
             n=agg["open_count"],
+            role="support",
         ),
         Fact(
             id="F4",
@@ -171,6 +174,7 @@ def pipeline_summary(
             unit="count",
             display=format_count(agg["stale_count"], "deals"),
             caveat_codes=["DQ005"],
+            role="caveat",
         ),
         Fact(
             id="F5",
@@ -180,6 +184,7 @@ def pipeline_summary(
             unit="pct",
             display=format_pct(tender_share_pct),
             caveat_codes=["DQ007"],
+            role="caveat",
         ),
     ]
 
@@ -357,6 +362,7 @@ def win_loss_analysis(
             display=format_count(won_cnt, "deals"),
             n=won_cnt,
             must_mention=True,
+            role="support",
         ),
         Fact(
             id="F2",
@@ -368,6 +374,7 @@ def win_loss_analysis(
             n=agg["won_with_value_count"],
             n_missing=won_cnt - agg["won_with_value_count"],
             must_mention=True,
+            role="primary",
         ),
         Fact(
             id="F3",
@@ -376,6 +383,7 @@ def win_loss_analysis(
             value=round(win_rate_count, 1),
             unit="pct",
             display=format_pct(win_rate_count),
+            role="primary",
         ),
         Fact(
             id="F4",
@@ -384,6 +392,7 @@ def win_loss_analysis(
             value=round(win_rate_val, 1),
             unit="pct",
             display=format_pct(win_rate_val),
+            role="support",
         ),
     ]
 
@@ -485,6 +494,7 @@ def owner_performance(
             value=len(rows),
             unit="count",
             display=f"{len(rows)} owners",
+            role="support",
         ),
         Fact(
             id="F2",
@@ -494,6 +504,7 @@ def owner_performance(
             unit="count",
             display=format_count(unassigned_count, "deals"),
             caveat_codes=["DQ004"],
+            role="caveat",
         ),
     ]
 
@@ -507,6 +518,7 @@ def owner_performance(
                 value=top_owner["open_pipeline_val"],
                 unit="INR",
                 display=format_inr(top_owner["open_pipeline_val"]),
+                role="primary",
             )
         )
 

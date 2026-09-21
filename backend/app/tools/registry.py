@@ -90,6 +90,70 @@ class ToolDefinition:
         }
 
 
+TOOL_EXAMPLES: Dict[str, List[str]] = {
+    "pipeline_summary": [
+        "How's our pipeline looking for the energy sector this quarter?",
+        "What is the open pipeline for energy in Q4 FY25-26?",
+    ],
+    "win_loss_analysis": [
+        "What is our historical win rate across sectors?",
+        "Show win-loss breakdown for renewables deals",
+    ],
+    "owner_performance": [
+        "How are deal owners performing across pipeline stages?",
+        "Show pipeline distribution by sales owner",
+    ],
+    "revenue_ladder": [
+        "What did we bill against contracted value?",
+        "Show me the revenue realization ladder",
+    ],
+    "receivables_summary": [
+        "How much cash have we collected?",
+        "What is our outstanding receivables balance?",
+    ],
+    "sector_performance": [
+        "Which sector has the biggest open pipeline?",
+        "Rank sectors by open pipeline value",
+    ],
+    "workorder_health": [
+        "Which work orders are still ongoing?",
+        "How many work orders are currently active?",
+    ],
+    "link_deals_to_orders": [
+        "Can we join deals and work orders?",
+        "Show linkage between CRM deals and operational orders",
+    ],
+    "data_quality_report": [
+        "How healthy is our data?",
+        "What data quality issues exist in our CRM?",
+    ],
+    "data_debt_list": [
+        "Show me the data quality ledger",
+        "List all data anomalies by severity code",
+    ],
+    "leadership_brief": [
+        "Generate executive leadership brief",
+        "Summarize key business risks and recommendations",
+    ],
+    "compare_periods": [
+        "Compare pipeline performance between quarters",
+        "Show quarter-over-quarter revenue progression",
+    ],
+    "explain_metric": [
+        "Explain how open pipeline is calculated",
+        "What is the definition and formula for weighted pipeline?",
+    ],
+    "list_capabilities": [
+        "What can this BI agent do?",
+        "List all available analytical capabilities",
+    ],
+    "resolve_period": [
+        "What are the date boundaries for Q4 FY25-26?",
+        "Resolve current fiscal quarter range",
+    ],
+}
+
+
 class ToolCallRequest(BaseModel):
     args: Dict[str, Any] = Field(default_factory=dict, description="Arguments to pass to the tool function")
 
@@ -99,6 +163,7 @@ class ToolMetadata(BaseModel):
     domain: str
     description: str
     parameters: Dict[str, Any]
+    examples: List[str] = Field(default_factory=list)
 
 
 class ToolRegistry:
@@ -240,6 +305,7 @@ class ToolRegistry:
                 domain=t.domain,
                 description=t.description,
                 parameters=t.parameters_schema,
+                examples=TOOL_EXAMPLES.get(t.name, []),
             )
             for t in self._tools.values()
         ]

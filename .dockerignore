@@ -17,4 +17,8 @@ backend/.env
 *.env
 *.xlsx
 **/*.xlsx
+*.parquet
+**/*.parquet
+backend/tests
+
 

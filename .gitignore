@@ -19,6 +19,7 @@ htmlcov/
 *.key
 *.cert
 *credential*
+!scripts/verify_credentials.py
 *.publishsettings
 
 # Node & Frontend dependencies and builds
@@ -41,3 +42,7 @@ Thumbs.db
 # Logs
 *.log
 logs/
+
+# Storage & Local State
+storage/
+

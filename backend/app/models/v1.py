@@ -67,6 +67,10 @@ class TrustReceiptV1(BaseModel):
     facts_grounded: int = 0
     data_as_of: str = "15 Jan 2026"
     verified: bool = True
+    model: Optional[str] = None
+    llm_called: bool = False
+    narration_source: Literal["llm", "llm_repaired", "template"] = "template"
+    template_reason: Optional[Literal["no_api_key", "llm_error", "verifier_rejected", "llm_mode_off"]] = None
 
 
 class SuggestionChipV1(BaseModel):
@@ -131,13 +135,16 @@ class ToolEventPayload(BaseModel):
 
 
 class LlmEventPayload(BaseModel):
-    call: Literal["plan", "narrate"]
+    call: Literal["plan", "narrate", "repair"]
     model: str
     tokens_in: int = 0
     tokens_out: int = 0
     queue_ms: float = 0.0
     duration_ms: float = 0.0
     degraded: bool = False
+    llm_called: bool = False
+    narration_source: Literal["llm", "llm_repaired", "template"] = "template"
+    template_reason: Optional[Literal["no_api_key", "llm_error", "verifier_rejected", "llm_mode_off"]] = None
 
 
 class RunFinishedPayload(BaseModel):
@@ -163,6 +170,10 @@ class MetaSourceResponse(BaseModel):
     deals_count: int = 332
     work_orders_count: int = 176
     display_badge: str
+    board_names: List[str] = Field(default_factory=lambda: ["Deal funnel", "Work_Order_Tracker"])
+    is_stale: bool = False
+    snapshot_age_seconds: Optional[int] = 0
+    refresh_policy: str = "Auto-sync every 10 minutes (single-flight background refresh)"
 
     model_config = {
         "json_schema_extra": {
@@ -173,10 +184,104 @@ class MetaSourceResponse(BaseModel):
                 "as_of_date": "15 Jan 2026",
                 "deals_count": 332,
                 "work_orders_count": 176,
-                "display_badge": "monday.com · synced 14:32 · as of 15 Jan 2026"
+                "display_badge": "monday.com · synced 14:32 · as of 15 Jan 2026",
+                "board_names": ["Deal funnel", "Work_Order_Tracker"],
+                "is_stale": False,
+                "snapshot_age_seconds": 120,
+                "refresh_policy": "Auto-sync every 10 minutes (single-flight background refresh)",
             }
         }
     }
+
+
+class DQCodeSummary(BaseModel):
+    code: str
+    name: str
+    count: int
+    severity: str
+    why_it_matters: str
+    example_query: str
+
+
+class MetaQualityResponse(BaseModel):
+    rows_loaded: Dict[str, int]
+    rows_used: Dict[str, int]
+    duplicates_removed: int = 0
+    header_rows_removed: int = 0
+    share_of_deals_with_no_value: str
+    empty_columns: List[str]
+    dq_codes: List[DQCodeSummary]
+    total_anomalies: int
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "rows_loaded": {"deals": 332, "work_orders": 176},
+                "rows_used": {"deals": 332, "work_orders": 176},
+                "duplicates_removed": 0,
+                "header_rows_removed": 0,
+                "share_of_deals_with_no_value": "8.7% (29 deals)",
+                "empty_columns": ["deal_funnel.unused_notes", "work_orders.legacy_id"],
+                "dq_codes": [
+                    {
+                        "code": "DQ003",
+                        "name": "Missing Deal Value",
+                        "count": 29,
+                        "severity": "high",
+                        "why_it_matters": "Deals with missing values are excluded from pipeline aggregates to prevent undercounting.",
+                        "example_query": "Which deals have missing values?",
+                    }
+                ],
+                "total_anomalies": 84,
+            }
+        }
+    }
+
+
+class MetaContractResponse(BaseModel):
+    as_of_date: str = "15 Jan 2026"
+    energy_sector_group: Dict[str, Any]
+    fiscal_year_policy: Dict[str, Any]
+    probability_weights: Dict[str, float]
+    cross_board_join_policy: str
+    metric_definitions: List[Dict[str, Any]]
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "as_of_date": "15 Jan 2026",
+                "energy_sector_group": {
+                    "name": "Energy Cluster",
+                    "sectors": ["Renewables", "Powerline"],
+                    "description": "Aggregated energy verticals representing green energy and powerline transmission assets in the dataset.",
+                },
+                "fiscal_year_policy": {
+                    "start_month": 4,
+                    "current_fy": "FY25-26",
+                    "current_quarter": "Q4 FY25-26",
+                    "quarter_range": "1 Jan 2026 - 31 Mar 2026",
+                },
+                "probability_weights": {
+                    "Lead": 0.10,
+                    "Qualified": 0.25,
+                    "Proposal": 0.50,
+                    "Negotiation": 0.75,
+                    "Won": 1.00,
+                    "Lost": 0.00,
+                },
+                "cross_board_join_policy": "No reliable deal-to-work-order key exists (DQ015). Cross-board joins without surrogate foreign keys are strictly refused.",
+                "metric_definitions": [
+                    {
+                        "name": "open_pipeline",
+                        "display_name": "Open Pipeline Value",
+                        "basis": "Excl. GST, Known Values Only",
+                        "formula": "SUM(deal_value) WHERE stage NOT IN ('Won', 'Lost')",
+                    }
+                ],
+            }
+        }
+    }
+
 
 
 class RunRecord(BaseModel):

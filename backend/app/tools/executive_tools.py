@@ -61,6 +61,7 @@ def leadership_brief(
             unit="INR",
             display=format_inr(pipe_val),
             must_mention=True,
+            role="primary",
         ),
         Fact(
             id="F2",
@@ -70,6 +71,7 @@ def leadership_brief(
             unit="INR",
             display=format_inr(contracted_val),
             must_mention=True,
+            role="primary",
         ),
         Fact(
             id="F3",
@@ -79,6 +81,7 @@ def leadership_brief(
             unit="INR",
             display=format_inr(billed_val),
             must_mention=True,
+            role="support",
         ),
         Fact(
             id="F4",
@@ -88,6 +91,7 @@ def leadership_brief(
             unit="INR",
             display=format_inr(collected_val),
             must_mention=True,
+            role="support",
         ),
         Fact(
             id="F5",
@@ -97,6 +101,7 @@ def leadership_brief(
             unit="INR",
             display=format_inr(receivable_val),
             must_mention=True,
+            role="support",
         ),
         Fact(
             id="F6",
@@ -105,6 +110,7 @@ def leadership_brief(
             value=unbilled_val,
             unit="INR",
             display=format_inr(unbilled_val),
+            role="support",
         ),
         Fact(
             id="F7",
@@ -113,6 +119,7 @@ def leadership_brief(
             value=realization_rate,
             unit="pct",
             display=format_pct(realization_rate),
+            role="support",
         ),
         Fact(
             id="F8",
@@ -122,6 +129,7 @@ def leadership_brief(
             unit="count",
             display=f"{delayed_orders + high_dq_count} risks",
             must_mention=True,
+            role="caveat",
         ),
     ]
 

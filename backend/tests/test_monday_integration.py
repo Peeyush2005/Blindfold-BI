@@ -8,8 +8,10 @@ from app.integrations.monday_client import MondayClient, WriteForbiddenError, Mu
 client = TestClient(app)
 
 
-def test_monday_meta_source_endpoint():
+def test_monday_meta_source_endpoint(monkeypatch):
     """Validates GET /api/v1/meta/source returns connection status, row counts, and display badge with no secrets."""
+    # Test with monday configured
+    monkeypatch.setattr(settings, "MONDAY_API_TOKEN", "mock_monday_token")
     response = client.get("/api/v1/meta/source")
     assert response.status_code == 200
     data = response.json()
@@ -24,6 +26,14 @@ def test_monday_meta_source_endpoint():
     assert "token" not in data
     assert "secret" not in data
     assert "key" not in data
+
+    # Test with monday unconfigured (snapshot fallback)
+    monkeypatch.setattr(settings, "MONDAY_API_TOKEN", "")
+    response_snap = client.get("/api/v1/meta/source")
+    assert response_snap.status_code == 200
+    data_snap = response_snap.json()
+    assert data_snap["source"] == "snapshot"
+    assert "Snapshot · synced" in data_snap["display_badge"]
 
 
 def test_monday_data_refresh_endpoint_security():
