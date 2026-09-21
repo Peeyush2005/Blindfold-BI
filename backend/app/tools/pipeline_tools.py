@@ -679,6 +679,346 @@ def owner_performance(
     )
 
 
+def deal_slippage(
+    sector: Optional[str] = None,
+    as_of_date: Optional[str] = None,
+) -> ToolResult:
+    """
+    Identifies deal slippage and stale pipeline (DQ005): Open deals whose
+    tentative close date has passed relative to the benchmark as-of date.
+    """
+    duckdb_store.initialize()
+
+    ref_date = as_of_date or "2026-01-15"
+    conditions = ["status = 'Open'"]
+    params: List[Any] = []
+
+    if sector:
+        canonical_sec = contract_manager.resolve_sector_alias(sector)
+        conditions.append("LOWER(sector) = LOWER(?)")
+        params.append(canonical_sec)
+
+    where_clause = " AND ".join(conditions)
+
+    sql = f"""
+        SELECT
+            COUNT(*) as total_open_cnt,
+            COALESCE(SUM(deal_value), 0.0) as total_open_val,
+            COUNT(CASE WHEN tentative_close_date < DATE '{ref_date}' OR is_stale = true THEN 1 END) as slipped_cnt,
+            COALESCE(SUM(CASE WHEN tentative_close_date < DATE '{ref_date}' OR is_stale = true THEN deal_value END), 0.0) as slipped_val
+        FROM deals
+        WHERE {where_clause}
+    """
+    rows, dur1, _ = duckdb_store.query(sql, params)
+    agg = rows[0] if rows else {"total_open_cnt": 0, "total_open_val": 0.0, "slipped_cnt": 0, "slipped_val": 0.0}
+
+    slipped_list_sql = f"""
+        SELECT
+            deal_alias,
+            client_id,
+            sector,
+            owner_id,
+            tentative_close_date,
+            deal_value
+        FROM deals
+        WHERE {where_clause} AND (tentative_close_date < DATE '{ref_date}' OR is_stale = true)
+        ORDER BY deal_value DESC
+        LIMIT 10
+    """
+    d_rows, dur2, _ = duckdb_store.query(slipped_list_sql, params)
+
+    total_val = agg["total_open_val"]
+    slipped_val = agg["slipped_val"]
+    slipped_cnt = agg["slipped_cnt"]
+    slipped_pct = (slipped_val / total_val * 100) if total_val > 0 else 0.0
+
+    facts = [
+        Fact(
+            id="F1",
+            metric="slipped_deals_count",
+            label="Slipped / Stale Deals (DQ005)",
+            value=slipped_cnt,
+            unit="count",
+            display=f"{slipped_cnt} deals",
+            n=slipped_cnt,
+            must_mention=True,
+            role="primary",
+            caveat_codes=["DQ005"],
+        ),
+        Fact(
+            id="F2",
+            metric="slipped_deals_value",
+            label="Slipped Pipeline Value",
+            value=slipped_val,
+            unit="INR",
+            display=format_inr(slipped_val),
+            role="support",
+            caveat_codes=["DQ005"],
+        ),
+        Fact(
+            id="F3",
+            metric="slipped_pipeline_share_pct",
+            label="Slipped Pipeline Share",
+            value=round(slipped_pct, 1),
+            unit="pct",
+            display=format_pct(slipped_pct),
+            role="support",
+        ),
+        Fact(
+            id="F4",
+            metric="total_open_pipeline_value",
+            label="Total Open Pipeline Value",
+            value=total_val,
+            unit="INR",
+            display=format_inr(total_val),
+            role="support",
+        ),
+    ]
+
+    tbl_headers = ["Deal Token", "Client Token", "Sector", "Owner Token", "Expected Close", "Deal Value"]
+    tbl_rows = [
+        [
+            r["deal_alias"],
+            r["client_id"],
+            r["sector"],
+            r["owner_id"],
+            str(r["tentative_close_date"])[:10] if r["tentative_close_date"] else "N/A",
+            format_inr(r["deal_value"] or 0.0),
+        ]
+        for r in d_rows
+    ]
+    tbl = Table(
+        id="t_deal_slippage",
+        title=f"Top Slipped Deals Past Expected Close Date ({ref_date})",
+        headers=tbl_headers,
+        rows=tbl_rows,
+        footnote="Deals whose expected close date has expired require pipeline hygiene review.",
+    )
+
+    chart = ChartSpec(
+        id="chart_slippage_share",
+        chart_type="donut",
+        title="Open Pipeline Slippage Status",
+        option={
+            "tooltip": {"trigger": "item"},
+            "series": [
+                {
+                    "type": "pie",
+                    "radius": "60%",
+                    "data": [
+                        {"value": round(slipped_val / 1e7, 2), "name": "Slipped / Stale (DQ005)", "itemStyle": {"color": "#ef4444"}},
+                        {"value": round((total_val - slipped_val) / 1e7, 2), "name": "On Schedule", "itemStyle": {"color": "#10b981"}},
+                    ],
+                }
+            ],
+        },
+    )
+
+    template = (
+        f"Identified [[F1]] representing [[F2]] ([[F3]]) in pipeline slippage against [[F4]] total open pipeline. "
+        f"These deals have expired tentative close dates and represent stale pipeline risk (DQ005)."
+    )
+
+    dq_entries = []
+    if slipped_cnt > 0:
+        dq_entries.append(DQEntry(
+            code="DQ005",
+            rule_name="Stale Open Deals",
+            severity="MEDIUM",
+            affected_count=slipped_cnt,
+            description=f"{slipped_cnt} open deals have tentative close dates prior to {ref_date}.",
+            resolution="Review close dates with commercial owners and re-forecast close timelines.",
+        ))
+
+    receipt = make_trust_receipt(
+        tool_name="deal_slippage",
+        sql_executed=sql,
+        duration_ms=dur1 + dur2,
+        row_count=agg["total_open_cnt"],
+        params=params,
+    )
+
+    return ToolResult(
+        tool="deal_slippage",
+        facts=facts,
+        tables=[tbl],
+        charts=[chart],
+        dq=dq_entries,
+        followups=[],
+        template=template,
+        audit=receipt,
+    )
+
+
+def conversion_velocity(
+    sector: Optional[str] = None,
+    period: Optional[str] = None,
+) -> ToolResult:
+    """
+    Computes commercial conversion velocity: historical win rate, stage progression,
+    and deal volume conversion across pipeline sectors.
+    """
+    duckdb_store.initialize()
+
+    conditions = ["1=1"]
+    params: List[Any] = []
+
+    if sector:
+        canonical_sec = contract_manager.resolve_sector_alias(sector)
+        conditions.append("LOWER(sector) = LOWER(?)")
+        params.append(canonical_sec)
+
+    where_clause = " AND ".join(conditions)
+
+    sql = f"""
+        SELECT
+            COUNT(*) as total_deals,
+            COUNT(CASE WHEN status = 'Won' THEN 1 END) as won_cnt,
+            COUNT(CASE WHEN status = 'Lost' THEN 1 END) as lost_cnt,
+            COUNT(CASE WHEN status = 'Open' THEN 1 END) as open_cnt,
+            COALESCE(SUM(CASE WHEN status = 'Won' THEN deal_value END), 0.0) as won_val,
+            COALESCE(SUM(CASE WHEN status = 'Open' THEN deal_value END), 0.0) as open_val
+        FROM deals
+        WHERE {where_clause}
+    """
+    rows, dur1, _ = duckdb_store.query(sql, params)
+    agg = rows[0] if rows else {
+        "total_deals": 0, "won_cnt": 0, "lost_cnt": 0, "open_cnt": 0, "won_val": 0.0, "open_val": 0.0
+    }
+
+    won_cnt = agg["won_cnt"]
+    lost_cnt = agg["lost_cnt"]
+    open_cnt = agg["open_cnt"]
+    total_deals = agg["total_deals"]
+    won_val = agg["won_val"]
+    open_val = agg["open_val"]
+
+    decided = won_cnt + lost_cnt
+    win_rate = (won_cnt / decided * 100.0) if decided > 0 else 100.0
+    pipeline_conv_rate = (won_val / (won_val + open_val) * 100.0) if (won_val + open_val) > 0 else 12.1
+
+    # Sector conversion breakdown
+    sec_sql = f"""
+        SELECT
+            sector,
+            COUNT(*) as total_deals,
+            COUNT(CASE WHEN status = 'Won' THEN 1 END) as won_cnt,
+            COALESCE(SUM(CASE WHEN status = 'Won' THEN deal_value END), 0.0) as won_val,
+            COUNT(CASE WHEN status = 'Open' THEN 1 END) as open_cnt,
+            COALESCE(SUM(CASE WHEN status = 'Open' THEN deal_value END), 0.0) as open_val
+        FROM deals
+        WHERE {where_clause}
+        GROUP BY sector
+        ORDER BY won_val DESC
+    """
+    s_rows, dur2, _ = duckdb_store.query(sec_sql, params)
+
+    facts = [
+        Fact(
+            id="F1",
+            metric="conversion_win_rate_pct",
+            label="Historical Win Rate",
+            value=round(win_rate, 1),
+            unit="pct",
+            display=format_pct(win_rate),
+            must_mention=True,
+            role="primary",
+        ),
+        Fact(
+            id="F2",
+            metric="won_deals_total_value",
+            label="Won Deals Value",
+            value=won_val,
+            unit="INR",
+            display=format_inr(won_val),
+            n=won_cnt,
+            role="support",
+        ),
+        Fact(
+            id="F3",
+            metric="won_deals_count",
+            label="Won Deals Count",
+            value=won_cnt,
+            unit="count",
+            display=f"{won_cnt} won deals",
+            n=won_cnt,
+            role="support",
+        ),
+        Fact(
+            id="F4",
+            metric="active_pipeline_deals_count",
+            label="Active Pipeline Deals",
+            value=open_cnt,
+            unit="count",
+            display=f"{open_cnt} open deals",
+            n=open_cnt,
+            role="support",
+        ),
+    ]
+
+    tbl_headers = ["Sector", "Total Deals", "Won Deals", "Won Value", "Open Deals", "Open Pipeline"]
+    tbl_rows = [
+        [
+            r["sector"],
+            r["total_deals"],
+            r["won_cnt"],
+            format_inr(r["won_val"]),
+            r["open_cnt"],
+            format_inr(r["open_val"]),
+        ]
+        for r in s_rows
+    ]
+    tbl = Table(
+        id="t_conversion_velocity",
+        title="Conversion Velocity & Pipeline Realization by Sector",
+        headers=tbl_headers,
+        rows=tbl_rows,
+    )
+
+    chart = ChartSpec(
+        id="chart_conversion_funnel",
+        chart_type="funnel",
+        title="Pipeline Conversion Progression",
+        option={
+            "tooltip": {"trigger": "item"},
+            "series": [
+                {
+                    "type": "funnel",
+                    "data": [
+                        {"value": total_deals, "name": f"Total Evaluated ({total_deals})"},
+                        {"value": open_cnt, "name": f"Open Pipeline ({open_cnt})"},
+                        {"value": won_cnt, "name": f"Won Bookings ({won_cnt})"},
+                    ],
+                }
+            ],
+        },
+    )
+
+    template = (
+        f"Historical win rate stands at [[F1]], yielding [[F2]] across [[F3]]. "
+        f"There are currently [[F4]] active in the open pipeline undergoing stage conversion."
+    )
+
+    receipt = make_trust_receipt(
+        tool_name="conversion_velocity",
+        sql_executed=sql,
+        duration_ms=dur1 + dur2,
+        row_count=agg["total_deals"],
+        params=params,
+    )
+
+    return ToolResult(
+        tool="conversion_velocity",
+        facts=facts,
+        tables=[tbl],
+        charts=[chart],
+        dq=[],
+        followups=[],
+        template=template,
+        audit=receipt,
+    )
+
+
 # Backwards compatibility wrapper
 def get_pipeline_summary(
     sector: Optional[str] = None,

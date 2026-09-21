@@ -18,19 +18,31 @@ from app.tools.pipeline_tools import (
     pipeline_summary,
     win_loss_analysis,
     owner_performance,
+    deal_slippage,
+    conversion_velocity,
 )
 from app.tools.revenue_tools import (
     revenue_ladder,
+    revenue_waterfall,
     receivables_summary,
     sector_performance,
+    credit_risk,
+    aging_analysis,
+    client_concentration,
+    collection_efficiency,
 )
 from app.tools.operations_tools import (
     workorder_health,
     link_deals_to_orders,
+    cross_board_linkage,
+    unbilled_exposure,
+    margin_analysis,
+    reconciliation_ledger,
 )
 from app.tools.query_tools import (
     data_quality_report,
     data_debt_list,
+    data_debt_ledger,
 )
 from app.tools.executive_tools import (
     leadership_brief,
@@ -91,10 +103,64 @@ class ToolDefinition:
 
 
 TOOL_EXAMPLES: Dict[str, List[str]] = {
+    # 14 Canonical Business Tools
     "pipeline_summary": [
         "How's our pipeline looking for the energy sector this quarter?",
         "What is the open pipeline for energy in Q4 FY25-26?",
     ],
+    "revenue_waterfall": [
+        "Show me the complete revenue waterfall from bookings to cash collected",
+        "What did we bill and collect against contracted value?",
+    ],
+    "sector_performance": [
+        "Which sector has the biggest open pipeline?",
+        "Rank sectors by open pipeline value and realization",
+    ],
+    "data_debt_ledger": [
+        "Show me the actionable data debt ledger",
+        "What data hygiene anomalies require operational remediation?",
+    ],
+    "credit_risk": [
+        "What is our credit risk exposure across top debtors?",
+        "Identify high-risk receivables and negative balance credit notes",
+    ],
+    "aging_analysis": [
+        "Show aging schedule for overdue accounts receivable",
+        "How much receivables balance is past 90 days overdue?",
+    ],
+    "client_concentration": [
+        "What is our client concentration risk?",
+        "Show top 10 clients by contracted value and Pareto share",
+    ],
+    "deal_slippage": [
+        "How much pipeline has slipped past expected close date?",
+        "Identify stale deals and slippage risk (DQ005)",
+    ],
+    "collection_efficiency": [
+        "What is our cash collection rate and estimated DSO?",
+        "How efficiently are we collecting against invoiced revenue?",
+    ],
+    "margin_analysis": [
+        "What are our operational delivery realization rates across sectors?",
+        "Analyze contracted versus billed realization by industry",
+    ],
+    "conversion_velocity": [
+        "What is our historical commercial win rate?",
+        "Show pipeline conversion progression from lead to won booking",
+    ],
+    "unbilled_exposure": [
+        "What is our total unbilled operational exposure?",
+        "How many completed work orders remain unbilled (DQ010)?",
+    ],
+    "reconciliation_ledger": [
+        "Show cross-board financial reconciliation across Deals and Work Orders",
+        "Reconcile CRM won bookings with operational contracted values",
+    ],
+    "cross_board_linkage": [
+        "Can we link CRM deals to operational work orders?",
+        "Explain cross-board linkage feasibility and sector bridge (DQ015)",
+    ],
+    # Additional specialized tools
     "win_loss_analysis": [
         "What is our historical win rate across sectors?",
         "Show win-loss breakdown for renewables deals",
@@ -110,10 +176,6 @@ TOOL_EXAMPLES: Dict[str, List[str]] = {
     "receivables_summary": [
         "How much cash have we collected?",
         "What is our outstanding receivables balance?",
-    ],
-    "sector_performance": [
-        "Which sector has the biggest open pipeline?",
-        "Rank sectors by open pipeline value",
     ],
     "workorder_health": [
         "Which work orders are still ongoing?",
@@ -193,12 +255,136 @@ class ToolRegistry:
                 return res.model_dump()
 
     def _register_all_tools(self):
-        # 1. Pipeline Tools
+        # =====================================================================
+        # CANONICAL 14 BUSINESS TOOLS (MASTER PROMPT SPECIFICATION)
+        # =====================================================================
+
+        # 1. pipeline_summary
         self.register(
             "pipeline_summary",
             pipeline_summary,
             "Pipeline",
             "Open pipeline value, probability-weighted pipeline, stage distribution, and tender concentration.",
+        )
+
+        # 2. revenue_waterfall
+        self.register(
+            "revenue_waterfall",
+            revenue_waterfall,
+            "Revenue",
+            "Complete revenue realization waterfall: Won Bookings -> Contracted -> Billed -> Collected -> Net Receivables.",
+        )
+
+        # 3. sector_performance
+        self.register(
+            "sector_performance",
+            sector_performance,
+            "Revenue",
+            "Multi-board comparative analysis across canonical sectors, reconciling Deals funnel and Work Orders execution.",
+        )
+
+        # 4. data_debt_ledger
+        self.register(
+            "data_debt_ledger",
+            data_debt_ledger,
+            "Governance",
+            "Actionable data debt and hygiene ledger (DQ001-DQ016) with affected records and remediation actions.",
+        )
+
+        # 5. credit_risk
+        self.register(
+            "credit_risk",
+            credit_risk,
+            "Revenue",
+            "Accounts receivable credit risk, top exposed debtors by client token, and negative receivables / credit notes (DQ009).",
+        )
+
+        # 6. aging_analysis
+        self.register(
+            "aging_analysis",
+            aging_analysis,
+            "Revenue",
+            "Accounts receivable aging schedule broken into 0-30, 31-60, 61-90, and 90+ days overdue buckets.",
+        )
+
+        # 7. client_concentration
+        self.register(
+            "client_concentration",
+            client_concentration,
+            "Revenue",
+            "Pareto and client concentration analysis identifying revenue risk across top customer accounts.",
+        )
+
+        # 8. deal_slippage
+        self.register(
+            "deal_slippage",
+            deal_slippage,
+            "Pipeline",
+            "Pipeline slippage and stale deal analysis (DQ005): Open deals whose expected close date has expired.",
+        )
+
+        # 9. collection_efficiency
+        self.register(
+            "collection_efficiency",
+            collection_efficiency,
+            "Revenue",
+            "Cash collection rate (collected vs billed) and Days Sales Outstanding (DSO) efficiency metric.",
+        )
+
+        # 10. margin_analysis
+        self.register(
+            "margin_analysis",
+            margin_analysis,
+            "Operations",
+            "Sector-level billing realization rates and operational delivery conversion margins.",
+        )
+
+        # 11. conversion_velocity
+        self.register(
+            "conversion_velocity",
+            conversion_velocity,
+            "Pipeline",
+            "Commercial conversion velocity, historical win rates, and pipeline stage progression.",
+        )
+
+        # 12. unbilled_exposure
+        self.register(
+            "unbilled_exposure",
+            unbilled_exposure,
+            "Operations",
+            "Unbilled revenue exposure and unbilled backlog, highlighting completed-but-unbilled projects (DQ010).",
+        )
+
+        # 13. reconciliation_ledger
+        self.register(
+            "reconciliation_ledger",
+            reconciliation_ledger,
+            "Operations",
+            "Multi-stage commercial reconciliation across Deals, Work Orders, Billing Invoices, and Cash Collections.",
+        )
+
+        # 14. cross_board_linkage
+        self.register(
+            "cross_board_linkage",
+            cross_board_linkage,
+            "Operations",
+            "Cross-board linkage feasibility audit (DQ015) enforcing canonical sector-level aggregation.",
+        )
+
+        # =====================================================================
+        # COMPATIBILITY ALIASES & ADDITIONAL EXECUTIVE TOOLS
+        # =====================================================================
+        self.register(
+            "revenue_ladder",
+            revenue_ladder,
+            "Revenue",
+            "Complete revenue realization waterfall (alias for revenue_waterfall).",
+        )
+        self.register(
+            "receivables_summary",
+            receivables_summary,
+            "Revenue",
+            "Accounts receivable aging, top debtors by client token, and credit notes / negative receivables (DQ009).",
         )
         self.register(
             "win_loss_analysis",
@@ -212,28 +398,6 @@ class ToolRegistry:
             "Pipeline",
             "Commercial owner workload, open pipeline distribution, and unassigned deals (DQ004).",
         )
-
-        # 2. Revenue Tools
-        self.register(
-            "revenue_ladder",
-            revenue_ladder,
-            "Revenue",
-            "Complete revenue realization waterfall: Won Bookings -> Contracted -> Billed -> Collected -> Net Receivables.",
-        )
-        self.register(
-            "receivables_summary",
-            receivables_summary,
-            "Revenue",
-            "Accounts receivable aging, top debtors by client token, and credit notes / negative receivables (DQ009).",
-        )
-        self.register(
-            "sector_performance",
-            sector_performance,
-            "Revenue",
-            "Multi-board comparative analysis across canonical sectors, reconciling Deals funnel and Work Orders execution.",
-        )
-
-        # 3. Operations Tools
         self.register(
             "workorder_health",
             workorder_health,
@@ -244,16 +408,14 @@ class ToolRegistry:
             "work_order_health",
             workorder_health,
             "Operations",
-            "Execution status of Work Orders, overdue delivery dates (DQ011), and completed-but-unbilled projects (DQ010).",
+            "Execution status of Work Orders (alias).",
         )
         self.register(
             "link_deals_to_orders",
             link_deals_to_orders,
             "Operations",
-            "Cross-board linkage feasibility audit (DQ015) enforcing sector-level reconciliation.",
+            "Cross-board linkage feasibility audit (DQ015) enforcing sector-level reconciliation (alias for cross_board_linkage).",
         )
-
-        # 4. Governance Tools
         self.register(
             "data_quality_report",
             data_quality_report,
@@ -266,8 +428,6 @@ class ToolRegistry:
             "Governance",
             "Granular remediation ledger for data hygiene anomalies with actionable advice and CSV export.",
         )
-
-        # 5. Executive Tools
         self.register(
             "leadership_brief",
             leadership_brief,
@@ -290,10 +450,8 @@ class ToolRegistry:
             "list_capabilities",
             list_capabilities,
             "Executive",
-            "Full catalog of 14 deterministic analytical tools, data sources, and governance policies.",
+            "Full catalog of deterministic analytical tools, data sources, and governance policies.",
         )
-
-        # 6. Utility Tools
         self.register(
             "resolve_period",
             resolve_period,

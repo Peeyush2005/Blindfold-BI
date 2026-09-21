@@ -212,7 +212,10 @@ class PipelineOrchestrator:
                 task_type = "trend"
             elif any(k in lowered_query for k in ["diagnose", "health", "quality", "debt", "scorecard", "dirty", "hygiene", "anomaly", "issue", "stale"]):
                 task_type = "diagnose"
-            elif any(k in lowered_query for k in ["summarize", "brief", "executive", "overview", "pulse", "leadership"]):
+            elif any(k in lowered_query for k in [
+                "summarize", "brief", "executive", "overview", "pulse", "leadership",
+                "how is", "how's", "how are", "how does", "looking", "status", "breakdown", "performance", "review"
+            ]):
                 task_type = "summarize"
             else:
                 task_type = "lookup"
@@ -315,15 +318,34 @@ class PipelineOrchestrator:
             # Deterministic Routing Fallback if LLM unavailable, off, or failed
             if not llm_plan_success:
                 tool_params = {}
-                if any(k in lowered_query for k in ["tender", "tenders", "bid", "bids"]):
+                if any(k in lowered_query for k in ["slippage", "slipped", "past close", "past expected close", "expired close"]):
+                    tool_name = "deal_slippage"
+                elif any(k in lowered_query for k in ["unbilled", "completed but unbilled", "completed unbilled", "unbilled backlog", "dq010"]):
+                    tool_name = "unbilled_exposure"
+                elif any(k in lowered_query for k in ["dso", "days sales outstanding", "collection efficiency", "collection rate"]):
+                    tool_name = "collection_efficiency"
+                elif any(k in lowered_query for k in ["margin", "realization rate", "delivery realization", "billing realization"]):
+                    tool_name = "margin_analysis"
+                elif any(k in lowered_query for k in ["conversion velocity", "funnel velocity", "progression", "conversion progression"]):
+                    tool_name = "conversion_velocity"
+                elif any(k in lowered_query for k in ["reconciliation", "reconcile", "reconciliation ledger"]):
+                    tool_name = "reconciliation_ledger"
+                elif any(k in lowered_query for k in ["credit risk", "debtor risk", "credit note", "negative receivable", "dq009"]):
+                    tool_name = "credit_risk"
+                elif any(k in lowered_query for k in ["aging", "aging schedule", "overdue", "past 90 days", "past 60 days", "past 30 days"]):
+                    tool_name = "aging_analysis"
+                elif any(k in lowered_query for k in ["client concentration", "customer concentration", "concentration risk", "pareto", "top 10 clients"]):
+                    tool_name = "client_concentration"
+                elif any(k in lowered_query for k in ["tender", "tenders", "bid", "bids"]):
                     tool_name = "pipeline_summary"
                     tool_params["deal_type"] = "Tender"
+                elif any(k in lowered_query for k in ["waterfall", "revenue waterfall"]):
+                    tool_name = "revenue_waterfall"
                 elif any(k in lowered_query for k in ["cash", "collected", "money received"]):
                     tool_name = "receivables_summary"
                     tool_params["metric"] = "collected_cash"
                 elif any(k in lowered_query for k in ["stale", "inactive", "stalled", "aged deals", "idle deals"]):
-                    tool_name = "data_debt_list"
-                    tool_params["type"] = "stale_open_deals"
+                    tool_name = "deal_slippage"
                 elif any(k in lowered_query for k in ["ongoing", "active", "in progress", "in-progress"]) and any(k in lowered_query for k in ["work order", "order", "delivery", "project"]):
                     tool_name = "work_order_health"
                     tool_params["status"] = "Ongoing"
@@ -333,33 +355,33 @@ class PipelineOrchestrator:
                     if any(k in lowered_query for k in ["biggest", "top 1", "largest", "leader"]):
                         tool_params["top_n"] = 1
                 elif any(k in lowered_query for k in ["conversion", "deal to work order", "link", "linkage", "cross board", "cross-board", "fk", "foreign key", "join deals"]):
-                    tool_name = "link_deals_to_orders"
+                    tool_name = "cross_board_linkage"
                 elif extracted_sector and any(k in lowered_query for k in ["pipeline", "deals", "funnel", "open"]):
                     tool_name = "pipeline_summary"
                     tool_params["sector"] = extracted_sector
                     if extracted_period:
                         tool_params["period"] = extracted_period
-                elif any(k in lowered_query for k in ["revenue", "billed", "contracted", "waterfall", "ladder"]):
-                    tool_name = "revenue_ladder"
-                elif any(k in lowered_query for k in ["receivable", "debtor", "aging", "overdue", "credit note", "outstanding"]):
+                elif any(k in lowered_query for k in ["revenue", "billed", "contracted", "ladder"]):
+                    tool_name = "revenue_waterfall"
+                elif any(k in lowered_query for k in ["receivable", "debtor", "outstanding"]):
                     tool_name = "receivables_summary"
                     tool_params["metric"] = "outstanding_receivables"
                 elif any(k in lowered_query for k in ["brief", "executive", "leadership", "kpi", "pulse"]):
                     tool_name = "leadership_brief"
                 elif any(k in lowered_query for k in ["win rate", "win loss", "loss", "closed"]):
-                    tool_name = "win_loss_analysis"
+                    tool_name = "conversion_velocity"
                 elif any(k in lowered_query for k in ["rep", "owner", "quota", "salesperson", "bd"]):
                     tool_name = "owner_performance"
-                elif any(k in lowered_query for k in ["delay", "health", "execution", "work order", "backlog", "unbilled"]):
+                elif any(k in lowered_query for k in ["delay", "health", "execution", "work order", "backlog"]):
                     tool_name = "work_order_health"
                 elif any(k in lowered_query for k in ["compare", "growth", "versus", "variance"]):
                     tool_name = "compare_periods"
                 elif any(k in lowered_query for k in ["explain", "definition", "formula", "metric"]):
                     tool_name = "explain_metric"
+                elif any(k in lowered_query for k in ["data debt", "data debt ledger", "remediation", "actionable data"]):
+                    tool_name = "data_debt_ledger"
                 elif any(k in lowered_query for k in ["data quality", "dq", "hygiene", "scorecard", "anomalies"]):
                     tool_name = "data_quality_report"
-                elif any(k in lowered_query for k in ["debt", "dirty", "ops list", "remediation", "unassigned"]):
-                    tool_name = "data_debt_list"
                 elif any(k in lowered_query for k in ["help", "tools", "capabilities", "what can you do"]):
                     tool_name = "list_capabilities"
                 elif any(k in lowered_query for k in ["sector", "cross-board", "comparison by sector", "multi-sector"]):

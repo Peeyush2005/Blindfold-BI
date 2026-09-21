@@ -330,3 +330,19 @@ def data_debt_list(
         template=template,
         audit=receipt,
     )
+
+
+def data_debt_ledger(
+    board: Optional[str] = None,
+    issue_code: Optional[str] = None,
+    severity: Optional[str] = None,
+    limit: int = 50,
+) -> ToolResult:
+    """
+    Canonical tool: Actionable Data Debt Ledger (DQ001-DQ016).
+    Returns prioritized data hygiene issues, affected records, and actionable remediation steps.
+    """
+    res = data_debt_list(board=board, issue_code=issue_code, severity=severity, limit=limit)
+    res.tool = "data_debt_ledger"
+    return res
+

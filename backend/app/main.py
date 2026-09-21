@@ -107,6 +107,10 @@ async def problem_exception_handler(request: Request, exc: ProblemException):
 # Mount Versioned v1 API
 app.include_router(api_v1_router)
 
+# Mount direct analytical tools router (/api/tools)
+from app.tools.registry import tools_router as direct_tools_router
+app.include_router(direct_tools_router)
+
 # Mount MCP Server if available
 if registry.mcp_server is not None:
     try:

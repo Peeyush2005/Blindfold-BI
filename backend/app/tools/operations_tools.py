@@ -432,6 +432,493 @@ def link_deals_to_orders(sector: Optional[str] = None) -> ToolResult:
     )
 
 
+def cross_board_linkage(sector: Optional[str] = None) -> ToolResult:
+    """
+    Canonical cross-board reconciliation bridge between Deal Funnel and Work Orders.
+    Reconciles at the canonical sector level with explicit DQ015 warning and join_method: sector_aggregation.
+    """
+    res = link_deals_to_orders(sector=sector)
+    res.tool = "cross_board_linkage"
+    # Ensure explicit metadata
+    res.audit["join_method"] = "sector_aggregation"
+    res.audit["caveats"].append("Direct item-level linkage unavailable; reconciled at sector level.")
+    return res
+
+
+def unbilled_exposure(
+    sector: Optional[str] = None,
+    execution_status: Optional[str] = None,
+) -> ToolResult:
+    """
+    Analyzes unbilled revenue exposure and unbilled backlog across work orders,
+    highlighting completed-but-unbilled projects (DQ010) and total unbilled balance.
+    """
+    duckdb_store.initialize()
+
+    conditions = ["(to_be_billed_excl_gst > 0 OR (execution_status = 'Completed' AND (billed_excl_gst = 0 OR billed_excl_gst IS NULL) AND amount_excl_gst > 0))"]
+    params: List[Any] = []
+
+    if sector:
+        canonical_sec = contract_manager.resolve_sector_alias(sector)
+        conditions.append("LOWER(sector) = LOWER(?)")
+        params.append(canonical_sec)
+
+    if execution_status:
+        conditions.append("LOWER(execution_status) = LOWER(?)")
+        params.append(execution_status)
+
+    where_clause = " AND ".join(conditions)
+
+    sql = f"""
+        SELECT
+            COUNT(*) as total_unbilled_orders,
+            COALESCE(SUM(to_be_billed_excl_gst), 0.0) as total_unbilled_val,
+            COUNT(CASE WHEN execution_status = 'Completed' AND (billed_excl_gst = 0 OR billed_excl_gst IS NULL) AND amount_excl_gst > 0 THEN 1 END) as comp_unbilled_cnt,
+            COALESCE(SUM(CASE WHEN execution_status = 'Completed' AND (billed_excl_gst = 0 OR billed_excl_gst IS NULL) AND amount_excl_gst > 0 THEN amount_excl_gst END), 0.0) as comp_unbilled_val
+        FROM work_orders
+        WHERE {where_clause}
+    """
+    rows, dur1, _ = duckdb_store.query(sql, params)
+    agg = rows[0] if rows else {
+        "total_unbilled_orders": 0, "total_unbilled_val": 0.0, "comp_unbilled_cnt": 0, "comp_unbilled_val": 0.0
+    }
+
+    list_sql = f"""
+        SELECT
+            deal_alias,
+            client_id,
+            sector,
+            execution_status,
+            amount_excl_gst,
+            to_be_billed_excl_gst
+        FROM work_orders
+        WHERE {where_clause}
+        ORDER BY to_be_billed_excl_gst DESC
+        LIMIT 10
+    """
+    d_rows, dur2, _ = duckdb_store.query(list_sql, params)
+
+    total_unbilled = agg["total_unbilled_val"]
+    comp_unbilled_val = agg["comp_unbilled_val"]
+    comp_unbilled_cnt = agg["comp_unbilled_cnt"]
+    total_orders = agg["total_unbilled_orders"]
+
+    facts = [
+        Fact(
+            id="F1",
+            metric="total_unbilled_exposure",
+            label="Total Unbilled Exposure",
+            value=total_unbilled,
+            unit="INR",
+            display=format_inr(total_unbilled),
+            must_mention=True,
+            role="primary",
+        ),
+        Fact(
+            id="F2",
+            metric="completed_unbilled_value",
+            label="Completed Unbilled Backlog (DQ010)",
+            value=comp_unbilled_val,
+            unit="INR",
+            display=format_inr(comp_unbilled_val),
+            n=comp_unbilled_cnt,
+            caveat_codes=["DQ010"],
+            role="support",
+        ),
+        Fact(
+            id="F3",
+            metric="completed_unbilled_count",
+            label="Completed Unbilled Orders (DQ010)",
+            value=comp_unbilled_cnt,
+            unit="count",
+            display=f"{comp_unbilled_cnt} orders",
+            n=comp_unbilled_cnt,
+            caveat_codes=["DQ010"],
+            role="support",
+        ),
+        Fact(
+            id="F4",
+            metric="total_unbilled_orders_count",
+            label="Total Unbilled Orders",
+            value=total_orders,
+            unit="count",
+            display=f"{total_orders} orders",
+            n=total_orders,
+            role="support",
+        ),
+    ]
+
+    tbl_headers = ["Order Token", "Client Token", "Sector", "Status", "Contracted (Excl GST)", "Unbilled Exposure"]
+    tbl_rows = [
+        [
+            r["deal_alias"],
+            r["client_id"],
+            r["sector"],
+            r["execution_status"],
+            format_inr(r["amount_excl_gst"] or 0.0),
+            format_inr(r["to_be_billed_excl_gst"] or 0.0),
+        ]
+        for r in d_rows
+    ]
+    tbl = Table(
+        id="t_unbilled_exposure",
+        title="Top Unbilled Work Order Exposures",
+        headers=tbl_headers,
+        rows=tbl_rows,
+        footnote="Highlights unbilled backlog across active and completed work orders.",
+    )
+
+    chart = ChartSpec(
+        id="chart_unbilled_composition",
+        chart_type="donut",
+        title="Unbilled Exposure Breakdown",
+        option={
+            "tooltip": {"trigger": "item"},
+            "series": [
+                {
+                    "type": "pie",
+                    "radius": "60%",
+                    "data": [
+                        {"value": round(comp_unbilled_val / 1e7, 2), "name": "Completed Unbilled (DQ010)", "itemStyle": {"color": "#ef4444"}},
+                        {"value": round((total_unbilled - comp_unbilled_val) / 1e7, 2), "name": "Active / In-Progress Backlog", "itemStyle": {"color": "#3b82f6"}},
+                    ],
+                }
+            ],
+        },
+    )
+
+    template = (
+        f"Total unbilled exposure stands at [[F1]] across [[F4]]. "
+        f"Crucially, [[F2]] across [[F3]] represents completed projects that have never been invoiced (DQ010)."
+    )
+
+    dq_entries = []
+    if comp_unbilled_cnt > 0:
+        dq_entries.append(DQEntry(
+            code="DQ010",
+            rule_name="Completed But Unbilled Work Orders",
+            severity="HIGH",
+            affected_count=comp_unbilled_cnt,
+            description=f"{comp_unbilled_cnt} work orders are marked Completed with 0 billed amount.",
+            resolution="Issue commercial invoices immediately for finished operational deliverables.",
+        ))
+
+    receipt = make_trust_receipt(
+        tool_name="unbilled_exposure",
+        sql_executed=sql,
+        duration_ms=dur1 + dur2,
+        row_count=total_orders,
+        params=params,
+    )
+
+    return ToolResult(
+        tool="unbilled_exposure",
+        facts=facts,
+        tables=[tbl],
+        charts=[chart],
+        dq=dq_entries,
+        followups=[],
+        template=template,
+        audit=receipt,
+    )
+
+
+def margin_analysis(
+    sector: Optional[str] = None,
+    period: Optional[str] = None,
+) -> ToolResult:
+    """
+    Computes sector-level billing realization rates and operational delivery margins.
+    Evaluates conversion from contracted value to billed and collected revenue.
+    """
+    duckdb_store.initialize()
+
+    conditions = ["1=1"]
+    params: List[Any] = []
+
+    if sector:
+        canonical_sec = contract_manager.resolve_sector_alias(sector)
+        conditions.append("LOWER(sector) = LOWER(?)")
+        params.append(canonical_sec)
+
+    where_clause = " AND ".join(conditions)
+
+    sql = f"""
+        SELECT
+            sector,
+            COUNT(*) as order_cnt,
+            COALESCE(SUM(amount_excl_gst), 0.0) as contracted_val,
+            COALESCE(SUM(billed_excl_gst), 0.0) as billed_val,
+            COALESCE(SUM(to_be_billed_excl_gst), 0.0) as unbilled_val,
+            ROUND(COALESCE(SUM(billed_excl_gst), 0.0) / NULLIF(SUM(amount_excl_gst), 0.0) * 100, 1) as realization_pct
+        FROM work_orders
+        WHERE {where_clause}
+        GROUP BY sector
+        ORDER BY contracted_val DESC
+    """
+    rows, dur, _ = duckdb_store.query(sql, params)
+
+    total_contracted = sum(r["contracted_val"] for r in rows)
+    total_billed = sum(r["billed_val"] for r in rows)
+    total_unbilled = sum(r["unbilled_val"] for r in rows)
+    overall_realization = (total_billed / total_contracted * 100.0) if total_contracted > 0 else 0.0
+
+    facts = [
+        Fact(
+            id="F1",
+            metric="portfolio_realization_rate_pct",
+            label="Overall Billing Realization Rate",
+            value=round(overall_realization, 1),
+            unit="pct",
+            display=format_pct(overall_realization),
+            must_mention=True,
+            role="primary",
+        ),
+        Fact(
+            id="F2",
+            metric="total_contracted_work_orders",
+            label="Total Contracted Order Value",
+            value=total_contracted,
+            unit="INR",
+            display=format_inr(total_contracted),
+            role="support",
+        ),
+        Fact(
+            id="F3",
+            metric="total_billed_realized_value",
+            label="Total Billed Invoiced Value",
+            value=total_billed,
+            unit="INR",
+            display=format_inr(total_billed),
+            role="support",
+        ),
+        Fact(
+            id="F4",
+            metric="total_unbilled_pipeline_value",
+            label="Total Unbilled Operational Backlog",
+            value=total_unbilled,
+            unit="INR",
+            display=format_inr(total_unbilled),
+            role="support",
+        ),
+    ]
+
+    tbl_headers = ["Sector", "Orders", "Contracted Value", "Billed Value", "Unbilled Backlog", "Realization %"]
+    tbl_rows = [
+        [
+            r["sector"],
+            r["order_cnt"],
+            format_inr(r["contracted_val"]),
+            format_inr(r["billed_val"]),
+            format_inr(r["unbilled_val"]),
+            f"{r['realization_pct']}%" if r["realization_pct"] is not None else "N/A",
+        ]
+        for r in rows
+    ]
+    tbl = Table(
+        id="t_margin_analysis",
+        title="Sector Operational Realization & Margin Analysis",
+        headers=tbl_headers,
+        rows=tbl_rows,
+        footnote="Realization represents billed amount divided by contracted project amount.",
+    )
+
+    chart = ChartSpec(
+        id="chart_sector_realization",
+        chart_type="bar",
+        title="Billing Realization Rate by Sector (%)",
+        option={
+            "tooltip": {"trigger": "axis"},
+            "xAxis": {"type": "category", "data": [r["sector"] for r in rows]},
+            "yAxis": {"type": "value", "max": 100, "axisLabel": {"formatter": "{value}%"}},
+            "series": [
+                {
+                    "type": "bar",
+                    "data": [r["realization_pct"] or 0.0 for r in rows],
+                    "itemStyle": {"color": "#3b82f6"},
+                }
+            ],
+        },
+    )
+
+    template = (
+        f"Portfolio billing realization rate stands at [[F1]], with [[F3]] invoiced against "
+        f"[[F2]] contracted. Operational unbilled backlog represents [[F4]]."
+    )
+
+    receipt = make_trust_receipt(
+        tool_name="margin_analysis",
+        sql_executed=sql,
+        duration_ms=dur,
+        row_count=len(rows),
+        params=params,
+    )
+
+    return ToolResult(
+        tool="margin_analysis",
+        facts=facts,
+        tables=[tbl],
+        charts=[chart],
+        dq=[],
+        followups=[],
+        template=template,
+        audit=receipt,
+    )
+
+
+def reconciliation_ledger(sector: Optional[str] = None) -> ToolResult:
+    """
+    Provides multi-stage commercial reconciliation across Deals, Work Orders,
+    Billing Invoices, and Cash Collections, identifying variances and leakage.
+    """
+    duckdb_store.initialize()
+
+    sec_cond = "1=1"
+    params: List[Any] = []
+    if sector:
+        canonical_sec = contract_manager.resolve_sector_alias(sector)
+        sec_cond = "LOWER(sector) = LOWER(?)"
+        params.append(canonical_sec)
+
+    sql = f"""
+        SELECT
+            sector,
+            open_pipeline_val,
+            won_deal_val,
+            contracted_excl_gst,
+            billed_excl_gst,
+            collected_incl_gst,
+            conversion_rate_pct
+        FROM sector_reconciliation
+        WHERE {sec_cond}
+        ORDER BY contracted_excl_gst DESC
+    """
+    rows, dur, _ = duckdb_store.query(sql, params)
+
+    total_won = sum(r["won_deal_val"] for r in rows)
+    total_contracted = sum(r["contracted_excl_gst"] for r in rows)
+    total_billed = sum(r["billed_excl_gst"] for r in rows)
+    total_collected = sum(r["collected_incl_gst"] for r in rows)
+    scope_variance = total_contracted - total_won
+    unbilled_gap = total_contracted - total_billed
+
+    facts = [
+        Fact(
+            id="F1",
+            metric="cross_board_scope_variance",
+            label="Cross-Board Contracted vs Won Variance",
+            value=scope_variance,
+            unit="INR",
+            display=format_inr(scope_variance),
+            caveat_codes=["DQ015"],
+            must_mention=True,
+            role="primary",
+        ),
+        Fact(
+            id="F2",
+            metric="total_work_orders_contracted",
+            label="Total Contracted Work Orders",
+            value=total_contracted,
+            unit="INR",
+            display=format_inr(total_contracted),
+            role="support",
+        ),
+        Fact(
+            id="F3",
+            metric="total_won_crm_deals",
+            label="Total Won CRM Deals",
+            value=total_won,
+            unit="INR",
+            display=format_inr(total_won),
+            role="support",
+        ),
+        Fact(
+            id="F4",
+            metric="operational_unbilled_gap",
+            label="Contracted to Billed Backlog Gap",
+            value=unbilled_gap,
+            unit="INR",
+            display=format_inr(unbilled_gap),
+            role="support",
+        ),
+    ]
+
+    tbl_headers = ["Sector", "CRM Won Value", "WO Contracted", "Billed (Excl GST)", "Collected (Cash)", "Conversion %"]
+    tbl_rows = [
+        [
+            r["sector"],
+            format_inr(r["won_deal_val"]),
+            format_inr(r["contracted_excl_gst"]),
+            format_inr(r["billed_excl_gst"]),
+            format_inr(r["collected_incl_gst"]),
+            f"{round(r['conversion_rate_pct'], 1)}%" if r["conversion_rate_pct"] is not None else "N/A",
+        ]
+        for r in rows
+    ]
+    tbl = Table(
+        id="t_reconciliation_ledger",
+        title="Multi-Stage Financial Reconciliation Ledger",
+        headers=tbl_headers,
+        rows=tbl_rows,
+        footnote="Variance between CRM Won and WO Contracted reflects multi-year framework contracts and independent board scoping.",
+    )
+
+    chart = ChartSpec(
+        id="chart_reconciliation_stages",
+        chart_type="bar",
+        title="Financial Pipeline Stages (INR Cr)",
+        option={
+            "tooltip": {"trigger": "axis"},
+            "xAxis": {"type": "category", "data": ["CRM Won", "WO Contracted", "Billed (Excl GST)", "Collected (Cash)"]},
+            "yAxis": {"type": "value", "name": "INR Cr"},
+            "series": [
+                {
+                    "type": "bar",
+                    "data": [
+                        {"value": round(total_won / 1e7, 2), "itemStyle": {"color": "#6366f1"}},
+                        {"value": round(total_contracted / 1e7, 2), "itemStyle": {"color": "#3b82f6"}},
+                        {"value": round(total_billed / 1e7, 2), "itemStyle": {"color": "#f59e0b"}},
+                        {"value": round(total_collected / 1e7, 2), "itemStyle": {"color": "#10b981"}},
+                    ],
+                }
+            ],
+        },
+    )
+
+    template = (
+        f"Reconciliation demonstrates a [[F1]] scope variance between Work Order contracted value "
+        f"([[F2]]) and CRM won bookings ([[F3]]). Unbilled delivery backlog stands at [[F4]]."
+    )
+
+    receipt = make_trust_receipt(
+        tool_name="reconciliation_ledger",
+        sql_executed=sql,
+        duration_ms=dur,
+        row_count=len(rows),
+        caveats=["DQ015: Deals and Work Orders lack direct foreign keys; reconciled at sector level."],
+    )
+
+    return ToolResult(
+        tool="reconciliation_ledger",
+        facts=facts,
+        tables=[tbl],
+        charts=[chart],
+        dq=[
+            DQEntry(
+                code="DQ015",
+                rule_name="Cross-Board Scope Variance",
+                severity="HIGH",
+                affected_count=len(rows),
+                description=f"WO contracted value ({format_inr(total_contracted)}) exceeds CRM won deals ({format_inr(total_won)}) by {format_inr(scope_variance)}.",
+                resolution="Reconcile framework contracts and direct-workorder entries with sales ops.",
+            )
+        ],
+        followups=[],
+        template=template,
+        audit=receipt,
+    )
+
+
 # Backwards compatibility wrappers
 def get_work_order_health() -> Dict[str, Any]:
     status_sql = """

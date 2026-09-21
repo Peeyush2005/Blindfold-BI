@@ -35,8 +35,12 @@ NON_CLAIM_PATTERNS = [
         re.IGNORECASE,
     ),                                                                    # January 15, 2026, Jan 15
     re.compile(r"\b\d{4}-\d{2}-\d{2}\b"),                                # 2026-01-15
+    re.compile(r"\b(?:0\s*-\s*30|31\s*-\s*60|61\s*-\s*90|90\s*\+)\s*(?:days?)?\b", re.IGNORECASE), # 0-30 days, 31-60 days, 61-90 days, 90+ days
     re.compile(r"\b(?:30|60|90|180|365)\s*-?\s*days?\b", re.IGNORECASE), # 90 days, 90-day aging thresholds
-    re.compile(r"\b(?:15|16)\s+(?:active\s+)?(?:DQ|data\s+quality)\s+(?:rules?|codes?|checks?|anomalies)\b", re.IGNORECASE),
+    re.compile(r"\b(?:14|15|16)\s+(?:active\s+)?(?:DQ|data\s+quality|canonical)?\s*(?:rules?|codes?|checks?|anomalies|tools?)\b", re.IGNORECASE),
+    re.compile(r"\b(?:8|10)\s*-?\s*stages?\b", re.IGNORECASE),           # 8-stage or 10-stage pipeline
+    re.compile(r"\b80\s*/\s*20\b"),                                      # 80/20 Pareto
+    re.compile(r"\bSection\s+\d+(?:\.\d+)?\b", re.IGNORECASE),           # Section 3.6
     re.compile(r"\bQ[1-4](?:\s*FY\d{2}(?:-\d{2})?)?\b", re.IGNORECASE),  # Q1, Q4 FY25-26
     re.compile(r"\bFY\s*\d{2}(?:-\d{2})?\b", re.IGNORECASE),             # FY25-26, FY26
     re.compile(r"\b\d+(?:st|nd|rd|th)\b", re.IGNORECASE),                # 1st, 2nd, 3rd, 4th
@@ -161,6 +165,9 @@ class NumberByReferenceVerifier:
                 final_text=fallback,
                 degraded_fallback_used=True,
             )
+
+        # Normalize any bracketed fact citation variants: [F1], [f1], [[f1]] -> [[F1]]
+        draft_prose = re.sub(r"\[+([Ff]\d+)\]+", lambda m: f"[[{m.group(1).upper()}]]", draft_prose)
 
         facts_map: Dict[str, Fact] = {}
         if isinstance(tool_data, ToolResult):
