@@ -56,6 +56,8 @@ class Settings(BaseSettings):
         "http://localhost:5173",
         "http://127.0.0.1:3000",
         "http://127.0.0.1:5173",
+        "https://mango-plant-08ea0340f.1.azurestaticapps.net",
     ]
+    CORS_ORIGIN_REGEX: Optional[str] = r"^https:\/\/.*\.azurestaticapps\.net$"
 
 settings = Settings()
