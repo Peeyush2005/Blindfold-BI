@@ -57,6 +57,7 @@ def data_quality_report(
             unit="count",
             display=f"{total_issues} rules",
             must_mention=True,
+            role="primary",
         ),
         Fact(
             id="F2",
@@ -66,6 +67,7 @@ def data_quality_report(
             unit="count",
             display=f"{high_sev} high severity",
             must_mention=True,
+            role="primary",
         ),
         Fact(
             id="F3",
@@ -74,6 +76,7 @@ def data_quality_report(
             value=total_affected,
             unit="count",
             display=f"{total_affected} rows",
+            role="support",
         ),
     ]
 
@@ -190,6 +193,8 @@ def data_debt_list(
             value=len(filtered),
             unit="count",
             display=f"{len(filtered)} issues",
+            role="primary",
+            must_mention=True,
         )
     ]
 

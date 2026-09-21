@@ -17,10 +17,10 @@ import uuid
 import json
 import asyncio
 import logging
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional, Tuple, Literal
 
 from app.config import settings
-from app.contracts import ToolResult, Fact, Table, ChartSpec, DQEntry, ContractManager
+from app.contracts import ToolResult, Fact, Table, ChartSpec, DQEntry, ContractManager, StructuredIntent, TaskType
 from app.models.schemas import ChatResponse, TrustReceipt, SuggestionChip, PipelineStepEvent
 from app.models.v1 import (
     RunRecord,
@@ -58,6 +58,7 @@ class PipelineOrchestrator:
 
     def __init__(self):
         self.contract_manager = ContractManager()
+        self.session_intent_history: Dict[str, List[StructuredIntent]] = {}
         self.init_catalog()
 
     def init_catalog(self):
@@ -141,10 +142,11 @@ class PipelineOrchestrator:
                     extracted_period = p_cand.upper()
                     break
 
-            # Sector canonical grouping
+            # Sector canonical grouping (Energy = Renewables + Powerline)
             sector_map = {
                 "energy": "Energy",
-                "power": "Power",
+                "powerline": "Powerline",
+                "power": "Energy",
                 "renewables": "Renewables",
                 "renewable": "Renewables",
                 "solar": "Renewables",
@@ -167,12 +169,48 @@ class PipelineOrchestrator:
                     extracted_sector = canonical
                     break
 
+            # Conversational Intent Memory (carryover across turns)
+            prior_intents = self.session_intent_history.get(session_id, [])
+            last_intent = prior_intents[-1] if prior_intents else None
+            if last_intent:
+                followup_triggers = ["what about", "how about", "and ", "what if", "tell me about"]
+                if any(lowered_query.startswith(trig) for trig in followup_triggers) or len(clean_query.split()) <= 4:
+                    # Inherit previous period if current query didn't explicitly name one
+                    if not any(p in lowered_query for p in ["fy24-25", "fy25-26", "fy26-27", "q1", "q2", "q3", "q4"]):
+                        if last_intent.filters.get("period"):
+                            extracted_period = last_intent.filters["period"]
+
+            # Task type inference
+            task_type: TaskType = "lookup"
+            if any(k in lowered_query for k in ["rank", "top", "biggest", "highest", "leader", "largest"]):
+                task_type = "rank"
+            elif any(k in lowered_query for k in ["compare", "versus", "vs", "variance", "difference", "better"]):
+                task_type = "compare"
+            elif any(k in lowered_query for k in ["trend", "waterfall", "ladder", "over time", "quarterly", "growth"]):
+                task_type = "trend"
+            elif any(k in lowered_query for k in ["diagnose", "health", "quality", "debt", "scorecard", "dirty", "hygiene", "anomaly", "issue", "stale"]):
+                task_type = "diagnose"
+            elif any(k in lowered_query for k in ["summarize", "brief", "executive", "overview", "pulse", "leadership"]):
+                task_type = "summarize"
+            else:
+                task_type = "lookup"
+
+            structured_intent = StructuredIntent(
+                task=task_type,
+                metrics=[],
+                filters={k: v for k, v in [("sector", extracted_sector), ("period", extracted_period)] if v},
+                group_by="sector" if task_type == "rank" else None,
+                top_n=1 if ("top 1" in lowered_query or "biggest" in lowered_query) else 5,
+                need_chart=task_type in ["rank", "trend", "compare", "summarize"],
+            )
+
             # Blindfold Privacy Gateway: Inbound Question Tokenization
             tokenizer = blindfold_gateway.get_tokenizer(session_id)
             anonymized_query = tokenizer.tokenize_text(clean_query)
 
             s1_dur = round((time.time() - t_s1) * 1000, 2)
             s1_meta.update({
+                "task": task_type,
                 "period": extracted_period,
                 "sector": extracted_sector,
                 "anonymized_length": len(anonymized_query),
@@ -273,6 +311,15 @@ class PipelineOrchestrator:
                     tool_name = "list_capabilities"
                 else:
                     tool_name = "pipeline_summary"
+
+            # Update structured intent with chosen tool and params, and persist in 2-turn memory
+            structured_intent.tool_name = tool_name
+            structured_intent.tool_args = tool_params
+            if session_id not in self.session_intent_history:
+                self.session_intent_history[session_id] = []
+            self.session_intent_history[session_id].append(structured_intent)
+            if len(self.session_intent_history[session_id]) > 2:
+                self.session_intent_history[session_id].pop(0)
 
             # Emit LLM Event for Planning
             await emit("llm", LlmEventPayload(
@@ -452,17 +499,6 @@ class PipelineOrchestrator:
 
             narrate_dur_ms = round((time.time() - t_narrate) * 1000, 2)
 
-            # Emit LLM Event for Narration
-            await emit("llm", LlmEventPayload(
-                call="narrate",
-                model=settings.NVIDIA_MODEL if llm_narrate_success else "local_synthesizer",
-                tokens_in=len(str(tokenized_tool_data).split()) + 300 if llm_narrate_success else 0,
-                tokens_out=len(draft_narrative.split()) if llm_narrate_success else 0,
-                queue_ms=0.0,
-                duration_ms=narrate_dur_ms,
-                degraded=not llm_narrate_success,
-            ).model_dump())
-
             s6_dur = round((time.time() - t_s6) * 1000, 2)
             s6_payload = StageEventPayload(
                 name="narrate",
@@ -475,7 +511,7 @@ class PipelineOrchestrator:
             await emit("stage", s6_payload)
 
             # =================================================================
-            # Stage 7: VERIFY
+            # Stage 7: VERIFY & REPAIR
             # =================================================================
             t_s7 = time.time()
             await emit("stage", StageEventPayload(
@@ -486,9 +522,71 @@ class PipelineOrchestrator:
                 meta={},
             ).model_dump())
 
-            ver_result = verifier.verify(draft_narrative, tool_result, substitute_tokens=True)
+            narration_source: Literal["llm", "llm_repaired", "template"] = "template"
+            template_reason: Optional[Literal["no_api_key", "llm_error", "verifier_rejected", "llm_mode_off"]] = None
+
+            audit_res = verifier.audit_claims(draft_narrative, tool_result, intent=structured_intent, question=clean_query)
+
+            if llm_narrate_success and audit_res.verified:
+                ver_result = verifier.verify(draft_narrative, tool_result, substitute_tokens=True, intent=structured_intent, question=clean_query)
+                narration_source = "llm"
+                template_reason = None
+            elif llm_narrate_success and not audit_res.verified:
+                # LLM draft had ungrounded claims. Perform 1 targeted repair call before falling back!
+                logger.info(f"Verifier detected ungrounded claims ({len(audit_res.offending_spans)} spans). Initiating repair call...")
+                t_rep = time.time()
+                repaired_draft = await llm_client.repair_narration(
+                    anonymized_query=anonymized_query,
+                    draft_prose=draft_narrative,
+                    offending_spans=audit_res.offending_spans,
+                    tool_data=tokenized_tool_data,
+                )
+                rep_dur = round((time.time() - t_rep) * 1000, 2)
+                if repaired_draft:
+                    repair_audit = verifier.audit_claims(repaired_draft, tool_result, intent=structured_intent, question=clean_query)
+                    if repair_audit.verified:
+                        ver_result = verifier.verify(repaired_draft, tool_result, substitute_tokens=True, intent=structured_intent, question=clean_query)
+                        ver_result.repaired = True
+                        narration_source = "llm_repaired"
+                        template_reason = None
+                        logger.info(f"LLM narrator repair succeeded in {rep_dur}ms and passed verification.")
+                    else:
+                        ver_result = verifier.verify(draft_narrative, tool_result, substitute_tokens=True, intent=structured_intent, question=clean_query)
+                        narration_source = "template"
+                        template_reason = "verifier_rejected"
+                        degraded = True
+                else:
+                    ver_result = verifier.verify(draft_narrative, tool_result, substitute_tokens=True, intent=structured_intent, question=clean_query)
+                    narration_source = "template"
+                    template_reason = "verifier_rejected"
+                    degraded = True
+            else:
+                ver_result = verifier.verify(draft_narrative, tool_result, substitute_tokens=True, intent=structured_intent, question=clean_query)
+                narration_source = "template"
+                if settings.LLM_MODE == "off":
+                    template_reason = "llm_mode_off"
+                elif not llm_client.client or not settings.NVIDIA_API_KEY:
+                    template_reason = "no_api_key"
+                else:
+                    template_reason = "llm_error"
+                degraded = True
+
             if not ver_result.verified:
                 degraded = True
+
+            # Emit LLM Event with complete telemetry
+            await emit("llm", LlmEventPayload(
+                call="narrate",
+                model=settings.NVIDIA_MODEL if (llm_narrate_success and narration_source != "template") else (settings.NVIDIA_MODEL if llm_narrate_success else "local_synthesizer"),
+                tokens_in=len(str(tokenized_tool_data).split()) + 300 if llm_narrate_success else 0,
+                tokens_out=len(ver_result.final_text.split()) if llm_narrate_success else 0,
+                queue_ms=0.0,
+                duration_ms=narrate_dur_ms,
+                degraded=degraded,
+                llm_called=llm_narrate_success,
+                narration_source=narration_source,
+                template_reason=template_reason,
+            ).model_dump())
 
             s7_dur = round((time.time() - t_s7) * 1000, 2)
             s7_status = "done" if ver_result.verified else "warn"
@@ -503,6 +601,8 @@ class PipelineOrchestrator:
                     "ungrounded_hallucinations": len(ver_result.hallucinations_detected),
                     "confidence_score": ver_result.confidence_score,
                     "fallback_used": ver_result.degraded_fallback_used,
+                    "repaired": getattr(ver_result, "repaired", False),
+                    "narration_source": narration_source,
                 },
             ).model_dump()
             all_stages.append(s7_payload)
@@ -523,8 +623,8 @@ class PipelineOrchestrator:
             # Rehydrate entity tokens to real names server-side
             final_text = tokenizer.rehydrate_text(ver_result.final_text)
 
-            # Construct Generated BI Blocks
-            generated_blocks = self._build_generated_bi_blocks(final_text, tool_result)
+            # Construct Generated BI Blocks dynamically based on intent
+            generated_blocks = self._build_generated_bi_blocks(final_text, tool_result, intent=structured_intent)
 
             # Build Trust Receipt
             total_duration_ms = round((time.time() - run_start) * 1000, 2)
@@ -539,6 +639,10 @@ class PipelineOrchestrator:
                 facts_grounded=ver_result.facts_grounded_count,
                 data_as_of=settings.AS_OF_DATE,
                 verified=ver_result.verified,
+                model=settings.NVIDIA_MODEL if (llm_narrate_success and narration_source != "template") else (settings.NVIDIA_MODEL if llm_narrate_success else None),
+                llm_called=llm_narrate_success,
+                narration_source=narration_source,
+                template_reason=template_reason,
             )
 
             # Generate Suggestion Follow-Up Chips (3 or 4)
@@ -629,62 +733,165 @@ class PipelineOrchestrator:
 
         return run_id
 
-    def _build_generated_bi_blocks(self, text_prose: str, tool_result: ToolResult) -> List[Dict[str, Any]]:
+    def _build_generated_bi_blocks(
+        self,
+        text_prose: str,
+        tool_result: ToolResult,
+        intent: Optional[StructuredIntent] = None,
+    ) -> List[Dict[str, Any]]:
         """
-        Builds typed Generated BI Blocks strictly produced by the tool facts.
+        Builds typed Generated BI Blocks strictly produced by the tool facts and structured intent.
+        - lookup: exactly 1 KPI card for primary fact, no chart, no table
+        - rank: primary KPI + bar chart + top-N table
+        - trend: primary KPI + line chart + period summary table
+        - compare: 2 KPI cards + delta
+        - diagnose: DQ summary note + affected rows table
+        - summarize: up to 4 KPIs + chart + table
         """
         blocks: List[Dict[str, Any]] = []
 
-        # 1. Prose narrative block
+        # 1. Prose narrative block is always first
         blocks.append(TextBlock(content=text_prose).model_dump())
 
-        # 2. KPI Cards (up to 4 key facts)
-        key_facts = [f for f in tool_result.facts if f.must_mention]
-        if not key_facts:
-            key_facts = tool_result.facts[:4]
+        task = intent.task if intent else "summarize"
 
-        for f in key_facts[:4]:
-            blocks.append(KpiBlock(
+        primary_facts = [f for f in tool_result.facts if getattr(f, "role", "support") == "primary"]
+        support_facts = [f for f in tool_result.facts if getattr(f, "role", "support") == "support"]
+        all_facts = primary_facts + support_facts if (primary_facts or support_facts) else tool_result.facts
+
+        def fact_to_kpi(f: Any) -> Dict[str, Any]:
+            val = float(f.value) if isinstance(f.value, (int, float)) and not isinstance(f.value, bool) else 0.0
+            return KpiBlock(
                 label=f.label,
-                value=float(f.value) if isinstance(f.value, (int, float)) else 0.0,
+                value=val,
                 display=f.display,
                 unit=f.unit or "INR",
                 delta=getattr(f, "delta", None),
                 coverage=getattr(f, "coverage", None),
-            ).model_dump())
+            ).model_dump()
 
-        # 3. Chart Block (if available)
-        if tool_result.charts:
-            chart = tool_result.charts[0]
-            series_data = []
-            if chart.option and "series" in chart.option:
-                s_list = chart.option.get("series", [])
-                if s_list and isinstance(s_list[0], dict) and "data" in s_list[0]:
-                    series_data = s_list[0]["data"]
+        if task == "lookup":
+            # Exactly 1 KPI card for the primary fact; no chart, no table
+            target_fact = primary_facts[0] if primary_facts else (all_facts[0] if all_facts else None)
+            if target_fact:
+                blocks.append(fact_to_kpi(target_fact))
 
-            blocks.append(ChartBlock(
-                chart_type=chart.chart_type,
-                title=chart.title,
-                data=series_data,
-                format="INR_CR",
-                option=chart.option,
-            ).model_dump())
+        elif task == "rank":
+            # 1 KPI for top ranking, Bar chart, and top-N table
+            if primary_facts:
+                blocks.append(fact_to_kpi(primary_facts[0]))
+            elif all_facts:
+                blocks.append(fact_to_kpi(all_facts[0]))
 
-        # 4. Table Block (if available, max 10 rows)
-        if tool_result.tables:
-            table = tool_result.tables[0]
-            blocks.append(TableBlock(
-                title=table.title,
-                columns=table.headers,
-                rows=table.rows[:10],
-            ).model_dump())
+            if tool_result.charts:
+                chart = tool_result.charts[0]
+                series_data = []
+                if chart.option and "series" in chart.option:
+                    s_list = chart.option.get("series", [])
+                    if s_list and isinstance(s_list[0], dict) and "data" in s_list[0]:
+                        series_data = s_list[0]["data"]
+                blocks.append(ChartBlock(
+                    chart_type=chart.chart_type,
+                    title=chart.title,
+                    data=series_data,
+                    format="INR_CR",
+                    option=chart.option,
+                ).model_dump())
 
-        # 5. Note Blocks (Data Quality and Assumptions)
-        for dq in tool_result.dq[:3]:
-            blocks.append(NoteBlock(
-                note_type="data_quality" if "DQ" in dq.code else "caveat",
-                text=f"{dq.code}: {dq.description}",
-            ).model_dump())
+            if tool_result.tables:
+                table = tool_result.tables[0]
+                top_limit = intent.top_n if (intent and intent.top_n) else 10
+                blocks.append(TableBlock(
+                    title=table.title,
+                    columns=table.headers,
+                    rows=table.rows[:top_limit],
+                ).model_dump())
+
+        elif task == "trend":
+            # 1 KPI card, Line/Waterfall chart, and period summary table
+            if primary_facts:
+                blocks.append(fact_to_kpi(primary_facts[0]))
+            elif all_facts:
+                blocks.append(fact_to_kpi(all_facts[0]))
+
+            if tool_result.charts:
+                chart = tool_result.charts[0]
+                series_data = []
+                if chart.option and "series" in chart.option:
+                    s_list = chart.option.get("series", [])
+                    if s_list and isinstance(s_list[0], dict) and "data" in s_list[0]:
+                        series_data = s_list[0]["data"]
+                blocks.append(ChartBlock(
+                    chart_type=chart.chart_type,
+                    title=chart.title,
+                    data=series_data,
+                    format="INR_CR",
+                    option=chart.option,
+                ).model_dump())
+
+            if tool_result.tables:
+                table = tool_result.tables[0]
+                blocks.append(TableBlock(
+                    title=table.title,
+                    columns=table.headers,
+                    rows=table.rows[:10],
+                ).model_dump())
+
+        elif task == "compare":
+            # 2 KPI cards (one per entity/period)
+            for f in all_facts[:2]:
+                blocks.append(fact_to_kpi(f))
+
+        elif task == "diagnose":
+            # DQ summary notes + affected rows table
+            for dq in tool_result.dq[:4]:
+                blocks.append(NoteBlock(
+                    note_type="data_quality" if "DQ" in dq.code else "caveat",
+                    text=f"{dq.code} ({dq.rule_name}): {dq.description}",
+                ).model_dump())
+            if tool_result.tables:
+                table = tool_result.tables[0]
+                blocks.append(TableBlock(
+                    title=table.title,
+                    columns=table.headers,
+                    rows=table.rows[:10],
+                ).model_dump())
+
+        else:
+            # summarize: 2 to 4 KPI cards + chart + table
+            for f in all_facts[:4]:
+                blocks.append(fact_to_kpi(f))
+
+            if tool_result.charts:
+                chart = tool_result.charts[0]
+                series_data = []
+                if chart.option and "series" in chart.option:
+                    s_list = chart.option.get("series", [])
+                    if s_list and isinstance(s_list[0], dict) and "data" in s_list[0]:
+                        series_data = s_list[0]["data"]
+                blocks.append(ChartBlock(
+                    chart_type=chart.chart_type,
+                    title=chart.title,
+                    data=series_data,
+                    format="INR_CR",
+                    option=chart.option,
+                ).model_dump())
+
+            if tool_result.tables:
+                table = tool_result.tables[0]
+                blocks.append(TableBlock(
+                    title=table.title,
+                    columns=table.headers,
+                    rows=table.rows[:10],
+                ).model_dump())
+
+        # Append Data Quality caveats if present and not already diagnosed
+        if task != "diagnose" and tool_result.dq:
+            for dq in tool_result.dq[:2]:
+                blocks.append(NoteBlock(
+                    note_type="data_quality" if "DQ" in dq.code else "caveat",
+                    text=f"{dq.code}: {dq.description}",
+                ).model_dump())
 
         return blocks
 

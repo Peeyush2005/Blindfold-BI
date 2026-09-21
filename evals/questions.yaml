@@ -1,0 +1,286 @@
+# evals/questions.yaml
+# 30 Evaluation questions for Blindfold BI across paraphrase groups, distinct intents, and edge cases.
+
+questions:
+  # Paraphrase Group 1: Energy Sector Pipeline in Q4
+  - id: Q01
+    question: "How's our pipeline looking for the energy sector this quarter?"
+    group: energy_pipeline_q4
+    expected_task: lookup
+    expected_tool: pipeline_summary
+    expected_args:
+      sector: "Energy"
+      sector_group: "Energy"
+      period: "Q4 FY25-26"
+    expected_primary: "open_pipeline"
+    coverage_caveat: true
+
+  - id: Q02
+    question: "What is the open pipeline for energy in Q4 FY25-26?"
+    group: energy_pipeline_q4
+    expected_task: lookup
+    expected_tool: pipeline_summary
+    expected_args:
+      sector: "Energy"
+      period: "Q4 FY25-26"
+    expected_primary: "open_pipeline"
+    coverage_caveat: true
+
+  - id: Q03
+    question: "Show me Q4 energy pipeline opportunities and valuation."
+    group: energy_pipeline_q4
+    expected_task: lookup
+    expected_tool: pipeline_summary
+    expected_args:
+      sector: "Energy"
+      period: "Q4 FY25-26"
+    expected_primary: "open_pipeline"
+    coverage_caveat: true
+
+  # Paraphrase Group 2: Sector Ranking (Top 1 / Biggest Pipeline)
+  - id: Q04
+    question: "Which sector has the biggest open pipeline?"
+    group: sector_ranking
+    expected_task: rank
+    expected_tool: sector_performance
+    expected_args:
+      metric: "open_pipeline"
+      top_n: 1
+    expected_primary: "top_sector"
+
+  - id: Q05
+    question: "Rank sectors by open pipeline value."
+    group: sector_ranking
+    expected_task: rank
+    expected_tool: sector_performance
+    expected_args:
+      metric: "open_pipeline"
+    expected_primary: "sector_ranking"
+
+  - id: Q06
+    question: "What is our top sector by pipeline opportunity size?"
+    group: sector_ranking
+    expected_task: rank
+    expected_tool: sector_performance
+    expected_args:
+      metric: "open_pipeline"
+      top_n: 1
+    expected_primary: "top_sector"
+
+  # Paraphrase Group 3: Tender Concentration & Outliers
+  - id: Q07
+    question: "How much of the pipeline is Tender?"
+    group: tender_concentration
+    expected_task: lookup
+    expected_tool: pipeline_summary
+    expected_args:
+      deal_type: "Tender"
+    expected_primary: "tender_share_pct"
+    oracle_value: "77.3%"
+
+  - id: Q08
+    question: "What percentage of open deals are tender bids?"
+    group: tender_concentration
+    expected_task: lookup
+    expected_tool: pipeline_summary
+    expected_args:
+      deal_type: "Tender"
+    expected_primary: "tender_share_pct"
+    oracle_value: "77.3%"
+
+  - id: Q09
+    question: "Show me the tender deal concentration and volume."
+    group: tender_concentration
+    expected_task: lookup
+    expected_tool: pipeline_summary
+    expected_args:
+      deal_type: "Tender"
+    expected_primary: "tender_share_pct"
+
+  # Paraphrase Group 4: Revenue Realization Ladder (Billed vs Contracted)
+  - id: Q10
+    question: "What did we bill against contracted value?"
+    group: revenue_ladder
+    expected_task: summarize
+    expected_tool: revenue_ladder
+    expected_args: {}
+    expected_primary: "billed_work_orders"
+
+  - id: Q11
+    question: "Show me the revenue realization ladder."
+    group: revenue_ladder
+    expected_task: summarize
+    expected_tool: revenue_ladder
+    expected_args: {}
+    expected_primary: "billed_work_orders"
+
+  - id: Q12
+    question: "How much revenue is billed compared to total contracted work orders?"
+    group: revenue_ladder
+    expected_task: summarize
+    expected_tool: revenue_ladder
+    expected_args: {}
+    expected_primary: "billed_work_orders"
+
+  # Paraphrase Group 5: Cash Collections
+  - id: Q13
+    question: "How much cash have we collected?"
+    group: cash_collections
+    expected_task: lookup
+    expected_tool: receivables_summary
+    expected_args: {}
+    expected_primary: "collected_cash"
+    gst_basis: "incl_gst"
+
+  - id: Q14
+    question: "What is our total collected cash amount?"
+    group: cash_collections
+    expected_task: lookup
+    expected_tool: receivables_summary
+    expected_args: {}
+    expected_primary: "collected_cash"
+    gst_basis: "incl_gst"
+
+  - id: Q15
+    question: "Show total customer collections on a bank receipt basis."
+    group: cash_collections
+    expected_task: lookup
+    expected_tool: receivables_summary
+    expected_args: {}
+    expected_primary: "collected_cash"
+    gst_basis: "incl_gst"
+
+  # Paraphrase Group 6: Work Order Health & Ongoing Operations
+  - id: Q16
+    question: "Which work orders are still ongoing?"
+    group: ongoing_work_orders
+    expected_task: diagnose
+    expected_tool: work_order_health
+    expected_args:
+      status: "Ongoing"
+    expected_primary: "ongoing_orders"
+
+  - id: Q17
+    question: "Show active or ongoing work orders."
+    group: ongoing_work_orders
+    expected_task: diagnose
+    expected_tool: work_order_health
+    expected_args:
+      status: "Ongoing"
+    expected_primary: "ongoing_orders"
+
+  - id: Q18
+    question: "How many work orders are currently in progress?"
+    group: ongoing_work_orders
+    expected_task: diagnose
+    expected_tool: work_order_health
+    expected_args:
+      status: "Ongoing"
+    expected_primary: "ongoing_orders"
+
+  # Paraphrase Group 7: Stale Deals & CRM Hygiene
+  - id: Q19
+    question: "Any stale open deals?"
+    group: stale_deals
+    expected_task: diagnose
+    expected_tool: data_debt_list
+    expected_args:
+      type: "stale_open_deals"
+    expected_primary: "stale_deals_count"
+
+  - id: Q20
+    question: "Which open pipeline deals have had no activity for over 90 days?"
+    group: stale_deals
+    expected_task: diagnose
+    expected_tool: data_debt_list
+    expected_args:
+      type: "stale_open_deals"
+    expected_primary: "stale_deals_count"
+
+  - id: Q21
+    question: "Show me inactive or stalled pipeline opportunities."
+    group: stale_deals
+    expected_task: diagnose
+    expected_tool: data_debt_list
+    expected_args:
+      type: "stale_open_deals"
+    expected_primary: "stale_deals_count"
+
+  # Paraphrase Group 8: Data Health & Quality Ledger
+  - id: Q22
+    question: "How healthy is our data?"
+    group: data_health
+    expected_task: diagnose
+    expected_tool: data_quality_report
+    expected_args: {}
+    expected_primary: "total_anomalies"
+
+  - id: Q23
+    question: "Show me the data quality ledger report and anomaly count."
+    group: data_health
+    expected_task: diagnose
+    expected_tool: data_quality_report
+    expected_args: {}
+    expected_primary: "total_anomalies"
+
+  - id: Q24
+    question: "What data quality issues exist in our CRM and operations data?"
+    group: data_health
+    expected_task: diagnose
+    expected_tool: data_quality_report
+    expected_args: {}
+    expected_primary: "total_anomalies"
+
+  # Conversational Follow-up (Context Inheritance)
+  - id: Q25
+    question: "What about Mining?"
+    group: conversational_followup
+    expected_task: lookup
+    expected_tool: pipeline_summary
+    expected_args:
+      sector: "Mining"
+    context_inherited: true
+    expected_primary: "open_pipeline"
+
+  - id: Q26
+    question: "What is the pipeline value for Mining?"
+    group: mining_pipeline
+    expected_task: lookup
+    expected_tool: pipeline_summary
+    expected_args:
+      sector: "Mining"
+    expected_primary: "open_pipeline"
+
+  # Receivables & Outstanding Debt
+  - id: Q27
+    question: "What is our outstanding receivables balance?"
+    group: receivables
+    expected_task: lookup
+    expected_tool: receivables_summary
+    expected_args: {}
+    expected_primary: "outstanding_receivables"
+
+  - id: Q28
+    question: "How much money is pending collection from billed work orders?"
+    group: receivables
+    expected_task: lookup
+    expected_tool: receivables_summary
+    expected_args: {}
+    expected_primary: "outstanding_receivables"
+
+  # Edge Case 1: Out of Scope Question
+  - id: Q29
+    question: "What's our profit margin?"
+    group: out_of_scope
+    expected_task: summarize
+    is_out_of_scope: true
+    expected_tool: null
+    refusal_suggests_alternatives: true
+
+  # Edge Case 2: Cross-Board Join Refusal (DQ015)
+  - id: Q30
+    question: "Can we join deals and work orders directly?"
+    group: cross_board_refusal
+    expected_task: diagnose
+    expected_tool: data_quality_report
+    cross_board_refused: true

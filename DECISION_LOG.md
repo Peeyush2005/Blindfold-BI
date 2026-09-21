@@ -4,15 +4,14 @@ This document records the architectural decisions, trade-offs, and governance po
 
 ---
 
-## 1. Single-Screen Conversational UI vs. Multi-Page Dashboards
+## 1. Two-Tab UI (Agent | Info) vs. Multi-Page Dashboards
 
-- **Context**: The original implementation exposed traditional dashboard views, pipeline simulators with manual playback dials, and navigation routers. In practice, fixed dashboards create maintenance overhead, suffer from mental math drift, and encourage static reporting.
-- **Decision**: Completely remove the multi-page router, dashboard views, playback controls, and simulator components. Standardize on a single-screen conversational BI interface featuring:
-  - Header with a live monday.com source badge (`monday.com · synced HH:MM · as of 15 Jan 2026`).
-  - Empty state with 4–6 starter suggestion chips and an input box.
-  - Live 8-stage Run panel that automatically collapses to a single summary line (`8 stages · X.Xs · Y tools · Z rows`) with an explicit `Replay` button upon completion.
-  - Dynamically generated BI blocks (`text`, `kpi`, `chart` via Apache ECharts, `table` capped at 10 rows, `note`, and trust receipt) created strictly by deterministic tool executions.
-- **Trade-off**: Users cannot browse arbitrary arbitrary raw tables in ad-hoc UI tabs; instead, all insights are question-driven, auditable, and backed by verifiable tool results.
+- **Context**: The original implementation exposed traditional dashboard views, pipeline simulators with manual playback dials, and navigation routers. In practice, fixed dashboards create maintenance overhead and encourage static reporting, but a completely single screen hides context a user needs to trust and audit the agent.
+- **Decision**: Redesign the interface into exactly two tabs (`Agent` and `Info`), preserving conversation state between tabs:
+  - Header with product title, segmented control `Agent | Info`, live monday.com source badge (`monday.com · synced HH:MM · as of 15 Jan 2026`, or `Stale snapshot` / `Not connected`), and light/dark theme toggle.
+  - `Agent` tab: Centered 760px conversation column, empty state with 4 grouped starter chip categories, question-driven answers with dynamic BI blocks (`text`, `kpi`, `chart`, `table`), trust badge, inline assumptions, follow-up chips, and collapsible Run panel.
+  - `Info` tab: Transparency center with 6 live API-fetched sections (Data source & freshness, Data health summary with "Ask the agent" links, Definitions & assumptions, What you can ask with clickable tool chips, Privacy & limits, API links and `/healthz`/`/readyz` probes).
+- **Trade-off**: BI visuals (KPI cards, charts, tables) still appear exclusively inside agent answers; the Info tab holds reference information, not a static dashboard.
 
 ---
 
@@ -22,19 +21,20 @@ This document records the architectural decisions, trade-offs, and governance po
 - **Decision**: Implement a pure in-process DuckDB analytical tools engine (`backend/app/tools/`). The LLM never writes raw SQL queries and never computes numbers.
   - Metric calculations are bound to pre-compiled, parameter-sanitized SQL templates.
   - Indian Financial Year definitions are strictly enforced (FY starts April 1; Q4 FY25-26 corresponds to Jan 1, 2026 – Mar 31, 2026, with an as-of date of 15 Jan 2026).
-  - Energy sector aggregation consolidates Power, Renewables, and Utilities per domain governance.
+  - Energy sector aggregation consolidates canonical labels present in the dataset: `Renewables` and `Powerline` (reflecting actual green energy and transmission asset vertical classifications; `Power` and `Utilities` do not exist in the source CRM data).
 - **Trade-off**: The platform only answers analytical questions mapped to registered tools. New analytical dimensions require registering new typed tool schemas rather than unbounded free-form querying.
 
 ---
 
-## 3. Numbers-by-Reference Protocol with Dual-Phase Fact Verification
+## 3. Numbers-by-Reference Protocol with Claim-Only Verification and Repair Loops
 
-- **Context**: Even when provided with correct facts, generative language models frequently misquote numbers, transpose digits, or hallucinate external statistics during natural language synthesis.
-- **Decision**: Narration uses a strict numbers-by-reference protocol (`[[F#]]` tokens).
-  - The synthesis prompt supplies only pseudonymized tool outputs and a fact dictionary (`F1: 49`, `F2: ₹68.82 Cr`).
-  - The model outputs narrative prose containing reference tokens rather than raw digits.
-  - The server verifies all numerical claims against the fact store before token substitution. Any ungrounded digit triggers automatic fallback to deterministic rule templates.
-- **Trade-off**: Adds a verification verification stage (`verify`) to the pipeline, incurring ~10–15ms of server processing time. In return, mathematical hallucinations are eliminated.
+- **Context**: Even when provided with correct facts, generative language models frequently misquote numbers, transpose digits, or hallucinate external statistics during natural language synthesis. Overly aggressive verifiers that reject every isolated digit also reject legitimate non-claim labels (such as `Q4`, `FY25-26`, ordinals like `1st`, or `top 3`), triggering unnecessary fallbacks to static templates.
+- **Decision**: Narration uses a claim-only numbers-by-reference protocol (`[[F#]]` tokens) with automated repair before fallback.
+  - The synthesis prompt supplies only pseudonymized tool outputs and a fact dictionary (`F1: 49`, `F2: ₹68.82 Cr`) with explicit fact roles (`primary`, `support`, `caveat`).
+  - The model outputs narrative prose containing reference tokens rather than raw quantitative claims.
+  - **Claim-Only Verifier**: Rejects ungrounded quantitative claims (currency amounts `₹...`, percentages `...%`, counts `... deals`, ratios), while explicitly allowing valid structural labels (`Q1`–`Q4`, fiscal periods `FY25-26`, ordinals `1st`/`2nd`, intent limits like `top 3`, and verified dates).
+  - **Single Repair Loop**: On verifier failure, the orchestrator issues exactly one repair call highlighting the exact offending spans. Only if the repaired draft fails verification does it fall back to question-aware dynamic templates.
+- **Trade-off**: Incurs an additional LLM turn (~400–600ms) when a draft requires repair, but slashes template fallback rates below 10% while guaranteeing zero hallucinated claims.
 
 ---
 

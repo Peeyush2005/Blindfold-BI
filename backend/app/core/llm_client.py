@@ -27,8 +27,8 @@ PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
 class TokenBucket:
     """Async token bucket rate limiter for external LLM calls."""
 
-    def __init__(self, rate: float = 0.25, capacity: float = 5.0):
-        # 0.25 tokens/sec = 15 requests/minute, capacity of 5 burst
+    def __init__(self, rate: float = 10.0, capacity: float = 60.0):
+        # 10.0 tokens/sec, capacity of 60 burst to allow evaluation suites to run seamlessly
         self.rate = rate
         self.capacity = capacity
         self.tokens = capacity
@@ -66,7 +66,7 @@ class LLMClient:
         self.api_key = settings.NVIDIA_API_KEY
         self.base_url = settings.NVIDIA_BASE_URL
         self.primary_model = settings.NVIDIA_MODEL
-        self.limiter = TokenBucket(rate=0.5, capacity=5.0)
+        self.limiter = TokenBucket(rate=10.0, capacity=60.0)
         self.client: Optional[AsyncOpenAI] = None
 
         if self.api_key and self.api_key.startswith("nvapi-"):
@@ -156,8 +156,10 @@ class LLMClient:
             fid = f.get("id", "")
             label = f.get("label", "")
             disp = f.get("display", "")
+            role = f.get("role", "support")
             caveat = f", Caveat: {f.get('caveat_codes')}" if f.get("caveat_codes") else ""
-            facts_summary.append(f"- [[{fid}]]: {label} = {disp}{caveat}")
+            priority = " *(PRIMARY FACT - CITE IN FIRST SENTENCE)*" if role == "primary" or f.get("must_mention") else ""
+            facts_summary.append(f"- [[{fid}]]: {label} = {disp}{priority}{caveat}")
 
         dq_warnings = []
         for d in tool_data.get("dq", []):
@@ -172,7 +174,10 @@ class LLMClient:
             f"AVAILABLE DETERMINISTIC FACTS (CITE AS [[F#]]):\n{facts_block}\n\n"
             f"DATA QUALITY ANOMALIES & CAVEATS:\n{dq_block}\n\n"
             f"CANONICAL FACT TEMPLATE:\n{tool_data.get('template', '')}\n\n"
-            f"Synthesize an executive response following the instructions. Remember: CITE ALL NUMBERS USING [[F#]] REFERENCE TOKENS."
+            f"INSTRUCTIONS:\n"
+            f"1. In your VERY FIRST SENTENCE, directly answer the user's question, naming the specific entities/filters (e.g. sector, period) and citing the primary fact [[F#]].\n"
+            f"2. Cite all numbers using [[F#]] reference tokens ONLY. Never perform mental math or invent ungrounded numbers.\n"
+            f"3. Follow the executive response structure."
         )
 
         if self.client and settings.LLM_MODE != "off":
@@ -202,6 +207,72 @@ class LLMClient:
 
         # Degraded fallback: Return fact-substituted template with executive sections
         return self._synthesize_local(tool_name, tool_data)
+
+    async def repair_narration(
+        self,
+        anonymized_query: str,
+        draft_prose: str,
+        offending_spans: List[str],
+        tool_data: Dict[str, Any],
+    ) -> Optional[str]:
+        """
+        Executes a single targeted repair call when verifier detects ungrounded numerical claims.
+        Provides the model with the exact offending spans and demands grounded replacement citing [[F#]].
+        """
+        if not self.client or settings.LLM_MODE == "off":
+            return None
+
+        acquired = await self.limiter.acquire(1.0, timeout=5.0)
+        if not acquired:
+            return None
+
+        facts_summary = []
+        for f in tool_data.get("facts", []):
+            fid = f.get("id", "")
+            label = f.get("label", "")
+            disp = f.get("display", "")
+            role = f.get("role", "support")
+            priority = " *(PRIMARY FACT)*" if role == "primary" or f.get("must_mention") else ""
+            facts_summary.append(f"- [[{fid}]]: {label} = {disp}{priority}")
+
+        facts_block = "\n".join(facts_summary) if facts_summary else "No explicit facts."
+        offending_block = "\n".join([f"- '{s}'" for s in offending_spans]) if offending_spans else "None specified."
+
+        prompt = (
+            f"User Question: {anonymized_query}\n\n"
+            f"PREVIOUS DRAFT WITH UNGROUNDED NUMERICAL CLAIMS:\n{draft_prose}\n\n"
+            f"OFFENDING UNGROUNDED SPANS DETECTED BY VERIFIER:\n{offending_block}\n\n"
+            f"AVAILABLE DETERMINISTIC FACTS (CITE ONLY AS [[F#]]):\n{facts_block}\n\n"
+            f"REPAIR INSTRUCTIONS:\n"
+            f"1. Directly answer the question in the very first sentence, citing the primary fact [[F#]].\n"
+            f"2. Fix or remove every offending ungrounded number. Do NOT perform mental math or invent digits.\n"
+            f"3. Every numeric quantity in the response must cite an available [[F#]] reference token.\n"
+            f"4. Provide the revised executive narrative."
+        )
+
+        models_to_try = [self.primary_model] + [m for m in self.FALLBACK_MODELS if m != self.primary_model]
+        for model_name in models_to_try:
+            try:
+                resp = await self.client.chat.completions.create(
+                    model=model_name,
+                    messages=[
+                        {"role": "system", "content": self._narrator_prompt},
+                        {"role": "user", "content": prompt},
+                    ],
+                    temperature=0.0,
+                    max_tokens=1500,
+                )
+                msg = resp.choices[0].message
+                text = (msg.content or "").strip()
+                if not text and getattr(msg, "reasoning_content", None):
+                    text = (msg.reasoning_content or "").strip()
+                if text:
+                    return text
+            except Exception as e:
+                logger.warning(f"Repair call failed on model {model_name}: {e}")
+                continue
+
+        return None
 
     def _synthesize_local(self, tool_name: str, tool_data: Dict[str, Any]) -> str:
         """

@@ -127,6 +127,7 @@ def workorder_health(
             display=f"{total_orders} work orders",
             n=total_orders,
             must_mention=True,
+            role="primary" if status_filter != "completed_unbilled" else "support",
         ),
         Fact(
             id="F2",
@@ -136,6 +137,7 @@ def workorder_health(
             unit="count",
             display=f"{completed_cnt} completed",
             n=completed_cnt,
+            role="support",
         ),
         Fact(
             id="F3",
@@ -144,6 +146,7 @@ def workorder_health(
             value=round(completion_rate, 1),
             unit="pct",
             display=format_pct(completion_rate),
+            role="support",
         ),
         Fact(
             id="F4",
@@ -154,6 +157,7 @@ def workorder_health(
             display=f"{delayed_count} delayed",
             caveat_codes=["DQ011"],
             must_mention=True if delayed_count > 0 else False,
+            role="caveat",
         ),
         Fact(
             id="F5",
@@ -163,6 +167,7 @@ def workorder_health(
             unit="count",
             display=f"{unbilled_comp_count} orders",
             caveat_codes=["DQ010"],
+            role="caveat" if status_filter != "completed_unbilled" else "support",
         ),
         Fact(
             id="F6",
@@ -172,6 +177,7 @@ def workorder_health(
             unit="INR",
             display=format_inr(unbilled_comp_val),
             caveat_codes=["DQ010"],
+            role="primary" if status_filter == "completed_unbilled" else "caveat",
         ),
     ]
 
@@ -290,6 +296,7 @@ def link_deals_to_orders(sector: Optional[str] = None) -> ToolResult:
             display="Infeasible (Direct joins rejected)",
             caveat_codes=["DQ015"],
             must_mention=True,
+            role="primary",
         ),
         Fact(
             id="F2",
@@ -300,6 +307,7 @@ def link_deals_to_orders(sector: Optional[str] = None) -> ToolResult:
             display="0.0%",
             caveat_codes=["DQ015"],
             must_mention=True,
+            role="caveat",
         ),
         Fact(
             id="F3",
@@ -308,6 +316,7 @@ def link_deals_to_orders(sector: Optional[str] = None) -> ToolResult:
             value=len(rows),
             unit="count",
             display=f"{len(rows)} sectors",
+            role="support",
         ),
         Fact(
             id="F4",
@@ -316,6 +325,7 @@ def link_deals_to_orders(sector: Optional[str] = None) -> ToolResult:
             value=len(rows),
             unit="count",
             display=f"{len(rows)} sectors",
+            role="support",
         ),
     ]
 

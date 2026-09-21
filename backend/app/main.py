@@ -17,6 +17,7 @@ from app.data.db import db
 from app.core.orchestrator import orchestrator
 from app.tools.registry import registry
 from app.api.v1 import api_v1_router
+from app.core.key_store import key_store
 from app.api.v1.deps import ProblemException, problem_json_response
 
 # Structured logging setup
@@ -98,6 +99,7 @@ async def problem_exception_handler(request: Request, exc: ProblemException):
         detail=exc.detail,
         code=exc.code,
         instance=request.url.path,
+        headers=getattr(exc, "extra_headers", None),
     )
 
 
@@ -136,37 +138,50 @@ async def healthz():
     "/readyz",
     tags=["Probes"],
     summary="Readiness Probe",
-    description="Kubernetes/container readiness probe confirming DuckDB, snapshot data, metric contracts, and LLM are ready to serve traffic.",
+    description="Kubernetes/container readiness probe confirming DuckDB, snapshot data, metric contracts, key store, and LLM are ready to serve traffic.",
 )
 async def readyz():
+    llm_ok = bool(settings.NVIDIA_API_KEY and settings.NVIDIA_API_KEY.strip())
+    monday_ok = bool(settings.MONDAY_API_TOKEN and settings.MONDAY_API_TOKEN.strip())
+    key_store_status = key_store.health_status()
+    duckdb_ok = db.store.con is not None and db.store.initialized
+    contracts_ok = bool(orchestrator.contract_manager.metrics)
+
+    data_source = "monday" if monday_ok else "snapshot"
+    llm_status = "configured" if llm_ok else "missing"
+
     checks = {
-        "duckdb": db.store.con is not None and db.store.initialized,
+        "duckdb": duckdb_ok,
         "data_snapshot": (adapter.deals_df is not None and adapter.wo_df is not None),
-        "metric_contracts": bool(orchestrator.contract_manager.metrics),
-        "llm_configuration": bool(settings.NVIDIA_API_KEY) or (settings.LLM_MODE == "off"),
+        "metric_contracts": contracts_ok,
+        "llm_configuration": llm_ok or (settings.LLM_MODE == "off"),
+        "key_store": key_store_status == "ok",
     }
 
-    is_ready = all(checks.values())
+    is_prod = settings.ENVIRONMENT.lower() == "production"
+    prod_missing_required = is_prod and (not llm_ok or not monday_ok or key_store_status != "ok")
+
+    is_ready = all(checks.values()) and not prod_missing_required
     status_code = status.HTTP_200_OK if is_ready else status.HTTP_503_SERVICE_UNAVAILABLE
 
     content = {
         "status": "ready" if is_ready else "not_ready",
+        "llm": llm_status,
+        "data_source": data_source,
+        "llm_configured": llm_ok,
+        "monday_configured": monday_ok,
+        "key_store": key_store_status,
         "checks": checks,
         "as_of_date": settings.AS_OF_DATE,
-        "source": "monday.com",
+        "source": data_source,
     }
 
     if not is_ready:
-        return JSONResponse(
-            status_code=status_code,
-            content={
-                "type": "https://api.skylark.ai/errors/NOT_READY",
-                "title": "Service Not Ready",
-                "status": status_code,
-                "detail": "One or more readiness dependencies are unavailable.",
-                "code": "NOT_READY",
-                "checks": checks,
-            },
+        content["code"] = "NOT_READY"
+        content["detail"] = (
+            "Production environment requires NVIDIA_API_KEY, MONDAY_API_TOKEN, and healthy key_store."
+            if prod_missing_required
+            else "One or more readiness dependencies are unavailable."
         )
 
     return JSONResponse(status_code=status_code, content=content)

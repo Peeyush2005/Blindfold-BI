@@ -9,8 +9,8 @@ canonical_sectors:
     description: "Solar PV thermography, wind turbine blade inspection, site planning."
     is_energy: true
 
-  - name: "Power"
-    aliases: ["power", "powerline", "powerlines", "transmission", "substation", "grid", "electrical"]
+  - name: "Powerline"
+    aliases: ["powerline", "power", "powerlines", "transmission", "substation", "grid", "electrical"]
     description: "Transmission line corridor monitoring, substation inspections, tower health."
     is_energy: true
 
@@ -44,6 +44,5 @@ energy_group:
   name: "Energy Cluster"
   sectors:
     - "Renewables"
-    - "Power"
-    - "Utilities"
-  description: "Aggregated energy verticals representing green energy, power transmission, and municipal utilities."
+    - "Powerline"
+  description: "Aggregated energy verticals representing green energy and powerline transmission assets in the dataset."

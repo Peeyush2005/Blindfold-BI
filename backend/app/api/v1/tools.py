@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from app.tools.registry import registry, ToolMetadata, ToolCallRequest
 from app.tools.chips import get_starter_chips
 from app.contracts import ToolResult, ChipCandidate
-from app.api.v1.deps import verify_api_key, check_rate_limit, ProblemException
+from app.api.v1.deps import require_api_key, check_rate_limit, ProblemException
 
 router = APIRouter(prefix="/tools", tags=["Tools Catalog & Execution v1"])
 
@@ -20,25 +20,16 @@ router = APIRouter(prefix="/tools", tags=["Tools Catalog & Execution v1"])
     response_model=List[ToolMetadata],
     summary="List Analytical Tools Catalog",
     description="Retrieve the complete registry of 14 deterministic DuckDB tools with typed JSON schemas.",
-    dependencies=[Depends(check_rate_limit), Depends(verify_api_key)],
+    dependencies=[Depends(check_rate_limit), Depends(require_api_key("tools:read"))],
     responses={
         200: {"description": "Array of tool metadata with JSON schemas."},
         401: {"description": "Unauthorized - invalid or missing X-API-Key."},
+        403: {"description": "Forbidden - insufficient scope."},
         429: {"description": "Rate limit exceeded."},
     },
 )
 async def list_tools():
-    catalog: List[ToolMetadata] = []
-    for t in registry._tools.values():
-        catalog.append(
-            ToolMetadata(
-                name=t.name,
-                domain=t.domain,
-                description=t.description,
-                parameters=t.parameters_schema,
-            )
-        )
-    return catalog
+    return registry.list_tools()
 
 
 @router.get(
@@ -69,10 +60,11 @@ async def starter_chips_post_not_allowed():
     "/{name}/schema",
     summary="Get Tool Schema by Name",
     description="Retrieve parameter schema and description for a specific tool.",
-    dependencies=[Depends(check_rate_limit), Depends(verify_api_key)],
+    dependencies=[Depends(check_rate_limit), Depends(require_api_key("tools:read"))],
     responses={
         200: {"description": "Tool parameter schema."},
         401: {"description": "Unauthorized - invalid or missing X-API-Key."},
+        403: {"description": "Forbidden - insufficient scope."},
         404: {"description": "Tool not found."},
         429: {"description": "Rate limit exceeded."},
     },
@@ -100,10 +92,11 @@ async def get_tool_schema_endpoint(name: str, request: Request):
     response_model=Dict[str, Any],
     summary="Execute Analytical Tool by Name",
     description="Programmatically execute a deterministic analytical tool with typed parameters.",
-    dependencies=[Depends(check_rate_limit), Depends(verify_api_key)],
+    dependencies=[Depends(check_rate_limit), Depends(require_api_key("tools:read"))],
     responses={
         200: {"description": "Structured ToolResult output."},
         401: {"description": "Unauthorized - invalid or missing X-API-Key."},
+        403: {"description": "Forbidden - insufficient scope."},
         404: {"description": "Tool not found in catalog."},
         429: {"description": "Rate limit exceeded."},
     },

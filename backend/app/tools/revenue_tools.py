@@ -101,6 +101,7 @@ def revenue_ladder(
             display=format_inr(contracted),
             n=wo["wo_count"],
             must_mention=True,
+            role="primary",
         ),
         Fact(
             id="F2",
@@ -111,6 +112,7 @@ def revenue_ladder(
             display=format_inr(billed),
             n=wo["wo_count"],
             must_mention=True,
+            role="primary",
         ),
         Fact(
             id="F3",
@@ -120,6 +122,7 @@ def revenue_ladder(
             unit="INR",
             display=format_inr(collected),
             must_mention=True,
+            role="primary",
         ),
         Fact(
             id="F4",
@@ -130,6 +133,7 @@ def revenue_ladder(
             display=format_inr(receivable),
             caveat_codes=["DQ009"] if wo["neg_receivable_count"] > 0 else [],
             must_mention=True,
+            role="support",
         ),
         Fact(
             id="F5",
@@ -138,6 +142,7 @@ def revenue_ladder(
             value=unbilled_backlog,
             unit="INR",
             display=format_inr(unbilled_backlog),
+            role="support",
         ),
         Fact(
             id="F6",
@@ -146,6 +151,7 @@ def revenue_ladder(
             value=round(realization_rate, 1),
             unit="pct",
             display=format_pct(realization_rate),
+            role="support",
         ),
         Fact(
             id="F7",
@@ -155,6 +161,7 @@ def revenue_ladder(
             unit="INR",
             display=format_inr(won_val),
             n=won_cnt,
+            role="support",
         ),
     ]
 
@@ -303,6 +310,7 @@ def receivables_summary(
             unit="INR",
             display=format_inr(agg["total_receivable"]),
             must_mention=True,
+            role="primary",
         ),
         Fact(
             id="F2",
@@ -312,6 +320,7 @@ def receivables_summary(
             unit="count",
             display=f"{agg['credit_notes_count']} credits",
             caveat_codes=["DQ009"],
+            role="caveat",
         ),
         Fact(
             id="F3",
@@ -320,6 +329,7 @@ def receivables_summary(
             value=agg["positive_debtors_sum"],
             unit="INR",
             display=format_inr(agg["positive_debtors_sum"]),
+            role="support",
         ),
     ]
 
@@ -383,12 +393,30 @@ def sector_performance(
     metric: str = "order_book",
     period: Optional[str] = None,
     top_n: int = 10,
+    sector: Optional[str] = None,
 ) -> ToolResult:
     """
     Multi-board comparative analysis across canonical sectors, reconciling Deals funnel
     and Work Orders execution metrics.
     """
     duckdb_store.initialize()
+
+    where_clauses = []
+    if sector:
+        canonical_sec = contract_manager.resolve_sector_alias(sector)
+        if canonical_sec.strip().lower() in ["energy", "energy_group", "energy cluster"]:
+            where_clauses.append("sector IN ('Renewables', 'Powerline')")
+        else:
+            where_clauses.append(f"sector ILIKE '%{canonical_sec}%'")
+    where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+
+    order_col = 'contracted_excl_gst'
+    if metric in ['open_pipeline', 'pipeline']:
+        order_col = 'open_pipeline_val'
+    elif metric in ['won', 'won_deals', 'won_value']:
+        order_col = 'won_deal_val'
+    elif metric in ['billed', 'revenue']:
+        order_col = 'billed_excl_gst'
 
     sql = f"""
         SELECT
@@ -405,11 +433,8 @@ def sector_performance(
             receivable_amount,
             conversion_rate_pct
         FROM sector_reconciliation
-        ORDER BY {
-            'contracted_excl_gst' if metric == 'order_book' else (
-                'open_pipeline_val' if metric == 'pipeline' else 'won_deal_val'
-            )
-        } DESC
+        {where_sql}
+        ORDER BY {order_col} DESC
         LIMIT {top_n}
     """
     rows, dur, _ = duckdb_store.query(sql)
@@ -422,21 +447,51 @@ def sector_performance(
             value=len(rows),
             unit="count",
             display=f"{len(rows)} sectors",
+            role="support",
         ),
     ]
 
     if rows:
         lead_sec = rows[0]
-        facts.append(
-            Fact(
-                id="F2",
-                metric="leading_sector_order_book",
-                label=f"Leading Sector ({lead_sec['sector']}) Order Book",
-                value=lead_sec["contracted_excl_gst"],
-                unit="INR",
-                display=format_inr(lead_sec["contracted_excl_gst"]),
+        if metric in ['open_pipeline', 'pipeline']:
+            facts.append(
+                Fact(
+                    id="F2",
+                    metric="top_sector",
+                    label=f"Leading Sector ({lead_sec['sector']}) Open Pipeline",
+                    value=lead_sec["open_pipeline_val"],
+                    unit="INR",
+                    display=format_inr(lead_sec["open_pipeline_val"]),
+                    role="primary",
+                    must_mention=True,
+                )
             )
-        )
+        elif metric in ['won', 'won_deals', 'won_value']:
+            facts.append(
+                Fact(
+                    id="F2",
+                    metric="top_sector_won",
+                    label=f"Leading Sector ({lead_sec['sector']}) Won Value",
+                    value=lead_sec["won_deal_val"],
+                    unit="INR",
+                    display=format_inr(lead_sec["won_deal_val"]),
+                    role="primary",
+                    must_mention=True,
+                )
+            )
+        else:
+            facts.append(
+                Fact(
+                    id="F2",
+                    metric="leading_sector_order_book",
+                    label=f"Leading Sector ({lead_sec['sector']}) Order Book",
+                    value=lead_sec["contracted_excl_gst"],
+                    unit="INR",
+                    display=format_inr(lead_sec["contracted_excl_gst"]),
+                    role="primary",
+                    must_mention=True,
+                )
+            )
 
     tbl_data = [
         [
@@ -497,7 +552,7 @@ def sector_performance(
             rule_name="Energy Sector Grouping",
             severity="LOW",
             affected_count=0,
-            description="Energy sector includes Power, Renewables, and Utilities per Section 3.6 governance.",
+            description="Energy sector includes Renewables and Powerline per canonical data governance.",
             resolution="Cross-board grouping harmonized across deals and work orders.",
         )
     ]
