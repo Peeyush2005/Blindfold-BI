@@ -17,6 +17,29 @@ from app.data.normalize import normalize_deals, normalize_work_orders
 logger = logging.getLogger(__name__)
 
 
+DEALS_COLUMNS = [
+    "deal_alias", "owner_id", "client_id", "status", "close_date_actual",
+    "closure_probability", "deal_value", "tentative_close_date", "stage_raw",
+    "product", "sector_raw", "created_date", "deal_name", "owner_code",
+    "client_code", "deal_status", "deal_stage", "sector", "close_date",
+    "prob_weight", "weighted_deal_value", "fiscal_year", "fiscal_quarter",
+    "is_stale", "join_key"
+]
+
+WO_COLUMNS = [
+    "deal_alias", "client_id", "serial_no", "nature_of_work", "last_executed_month",
+    "execution_status", "data_delivery_date", "po_date", "document_type",
+    "start_date", "end_date", "owner_id", "sector_raw", "type_of_work",
+    "has_software", "last_invoice_date", "latest_invoice_no", "amount_excl_gst",
+    "amount_incl_gst", "billed_excl_gst", "billed_incl_gst", "collected_incl_gst",
+    "to_be_billed_excl_gst", "to_be_billed_incl_gst", "receivable_amount",
+    "ar_priority", "quantity_ops", "quantity_po", "quantity_billed",
+    "quantity_balance", "invoice_status", "actual_billing_month",
+    "wo_status_billed", "billing_status", "deal_name", "client_code",
+    "owner_code", "sector", "is_overdue", "fiscal_year", "fiscal_quarter", "join_key"
+]
+
+
 class DuckDBStore:
     def __init__(self):
         self.con = duckdb.connect(database=":memory:")
@@ -45,7 +68,8 @@ class DuckDBStore:
             if p and p.exists():
                 self.deals_df = normalize_deals(p)
             else:
-                raise FileNotFoundError(f"Deals dataset not found at {p}")
+                logger.warning(f"No deals dataset found at {p}. Initializing clean schema.")
+                self.deals_df = pd.DataFrame(columns=DEALS_COLUMNS)
 
         if wo_df is not None:
             self.wo_df = wo_df
@@ -54,7 +78,8 @@ class DuckDBStore:
             if p and p.exists():
                 self.wo_df = normalize_work_orders(p)
             else:
-                raise FileNotFoundError(f"Work orders dataset not found at {p}")
+                logger.warning(f"No work orders dataset found at {p}. Initializing clean schema.")
+                self.wo_df = pd.DataFrame(columns=WO_COLUMNS)
 
         # Register raw dataframes in DuckDB
         self.con.register("deals_raw", self.deals_df)

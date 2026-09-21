@@ -30,11 +30,11 @@ logger = logging.getLogger("blindfold.api")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: Initialize DuckDB and Blindfold Privacy Gateway catalogs
-    logger.info("Initializing DuckDB analytic tables...")
-    db.init_db()
+    # Startup: Initialize DataAdapter snapshot and DuckDB analytic tables
     logger.info("Initializing DataAdapter snapshot...")
     adapter.load_data()
+    logger.info("Initializing DuckDB analytic tables...")
+    db.init_db()
     logger.info("Initializing Blindfold Privacy Gateway surrogate catalogs...")
     orchestrator.init_catalog()
     yield

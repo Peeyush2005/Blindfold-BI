@@ -123,3 +123,40 @@ def test_snapshot_service():
     assert meta["work_orders_count"] == 176
     assert len(meta["checksum"]) == 16
     assert not meta["is_stale"]
+
+
+def test_graceful_empty_schema_when_fixtures_absent(monkeypatch, tmp_path):
+    """Verify DuckDBStore and DataAdapter fallback gracefully to empty typed schemas when Excel fixtures do not exist."""
+    from app.config import settings
+    from app.data.adapter import DataAdapter
+    from app.data.duckdb_store import DuckDBStore
+
+    fake_missing_excel = tmp_path / "non_existent.xlsx"
+    monkeypatch.setattr(settings, "DEALS_EXCEL_PATH", fake_missing_excel)
+    monkeypatch.setattr(settings, "WO_EXCEL_PATH", fake_missing_excel)
+    monkeypatch.setattr(settings, "MONDAY_API_TOKEN", "")
+
+    # Ensure DuckDBStore initializes without throwing FileNotFoundError
+    store = DuckDBStore()
+    store.initialize(force_refresh=True)
+    assert store.deals_df is not None
+    assert len(store.deals_df) == 0
+    assert store.wo_df is not None
+    assert len(store.wo_df) == 0
+
+    # Ensure views can be queried without SQL Binder Errors
+    records, duration_ms, count = store.query("SELECT COUNT(*) AS c FROM sector_reconciliation")
+    assert records[0]["c"] == 9  # 9 canonical sectors
+
+    # Ensure DataAdapter loads empty typed dataframes
+    local_adapter = DataAdapter()
+    d_df, w_df = local_adapter.load_data(force_refresh=True)
+    assert len(d_df) == 0
+    assert len(w_df) == 0
+
+    # Restore global singletons for subsequent test suites
+    monkeypatch.undo()
+    from app.data.adapter import adapter
+    duckdb_store.initialize(force_refresh=True)
+    adapter.load_data(force_refresh=True)
+

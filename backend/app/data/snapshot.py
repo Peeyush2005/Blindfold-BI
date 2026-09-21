@@ -10,11 +10,11 @@ import logging
 from typing import Dict, Any, Optional, Tuple
 from pathlib import Path
 import pandas as pd
-import duckdb
 
 from app.config import settings
 from app.data.normalize import normalize_deals, normalize_work_orders
 from app.data.dq_ledger import dq_ledger
+from app.data.duckdb_store import DEALS_COLUMNS, WO_COLUMNS
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +51,9 @@ class SnapshotService:
                 d_df = normalize_deals(settings.DEALS_EXCEL_PATH)
                 w_df = normalize_work_orders(settings.WO_EXCEL_PATH)
             else:
-                raise FileNotFoundError(f"Fixture datasets not found at {settings.DEALS_EXCEL_PATH} or {settings.WO_EXCEL_PATH}")
+                logger.warning(f"Fixture datasets not found at {settings.DEALS_EXCEL_PATH}. Using clean empty schema.")
+                d_df = pd.DataFrame(columns=DEALS_COLUMNS)
+                w_df = pd.DataFrame(columns=WO_COLUMNS)
 
             self.deals_df = d_df
             self.wo_df = w_df

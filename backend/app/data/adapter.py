@@ -18,7 +18,7 @@ import yaml
 from app.config import settings
 from app.data.monday_client import monday_client, MondayClient
 from app.data.normalize import normalize_deals, normalize_work_orders
-from app.data.duckdb_store import duckdb_store
+from app.data.duckdb_store import duckdb_store, DEALS_COLUMNS, WO_COLUMNS
 
 logger = logging.getLogger(__name__)
 
@@ -125,12 +125,17 @@ class DataAdapter:
         live_result = None
         if monday_configured and settings.MONDAY_DEALS_BOARD_ID and settings.MONDAY_WO_BOARD_ID:
             try:
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    # Running in existing event loop (e.g. within an async request)
-                    live_result = None
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    loop = None
+
+                if loop and loop.is_running():
+                    import concurrent.futures
+                    with concurrent.futures.ThreadPoolExecutor() as pool:
+                        live_result = pool.submit(lambda: asyncio.run(self._fetch_from_monday())).result()
                 else:
-                    live_result = loop.run_until_complete(self._fetch_from_monday())
+                    live_result = asyncio.run(self._fetch_from_monday())
             except Exception as e:
                 logger.warning(f"Async Monday fetch encountered error, using fallback: {e}")
 
@@ -143,15 +148,17 @@ class DataAdapter:
             logger.info(f"Loaded live Monday data: {len(self.deals_df)} deals, {len(self.wo_df)} work orders.")
             return self.deals_df, self.wo_df
 
-        # Fallback to local test fixtures
+        # Fallback to local test fixtures or clean schema
         try:
             if settings.DEALS_EXCEL_PATH.exists() and settings.WO_EXCEL_PATH.exists():
                 d_df = normalize_deals(settings.DEALS_EXCEL_PATH)
                 w_df = normalize_work_orders(settings.WO_EXCEL_PATH)
             else:
-                raise FileNotFoundError(
-                    f"Datasets not found at {settings.DEALS_EXCEL_PATH} or {settings.WO_EXCEL_PATH}"
+                logger.warning(
+                    f"Excel fixtures not found at {settings.DEALS_EXCEL_PATH}. Using empty schema."
                 )
+                d_df = pd.DataFrame(columns=DEALS_COLUMNS)
+                w_df = pd.DataFrame(columns=WO_COLUMNS)
 
             self.deals_df = d_df
             self.wo_df = w_df
