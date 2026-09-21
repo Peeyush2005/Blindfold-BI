@@ -3,7 +3,7 @@ import pytest
 from fastapi.testclient import TestClient
 from app.main import app
 from app.config import settings
-from app.integrations.monday_client import MondayClient, WriteForbiddenError, MutationForbiddenError
+from app.data.monday_client import MondayClient, WriteForbiddenError, MutationForbiddenError
 
 client = TestClient(app)
 

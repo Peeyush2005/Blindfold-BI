@@ -6,7 +6,7 @@ enforces 332 clean rows, and logs DQ001-DQ007 in the DQ Ledger.
 
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
 import pandas as pd
 import numpy as np
 
@@ -18,20 +18,22 @@ from app.data.normalize.common import (
 )
 
 
-def normalize_deals(file_path: Path, as_of_date: pd.Timestamp = DEFAULT_AS_OF_DATE) -> pd.DataFrame:
+def normalize_deals(source: Union[Path, str, pd.DataFrame], as_of_date: pd.Timestamp = DEFAULT_AS_OF_DATE) -> pd.DataFrame:
     """
-    Transforms raw Deal funnel Data sheet into standardized analytical DataFrame.
+    Transforms raw Deal funnel Data sheet or raw DataFrame into standardized analytical DataFrame.
     Validates against Ground Truth Spot Checks:
     - Net cleaned rows: 332
     - Open deals: 49 (47 with value, sum ₹68.82 Cr)
     - Won deals: 153 (64 with value, sum ₹9.50 Cr)
     - Tender open: ₹53.20 Cr (77.3%)
     """
-    if not file_path.exists():
-        raise FileNotFoundError(f"Deals file not found: {file_path}")
-
-    # Read raw sheet
-    df_raw = pd.read_excel(file_path, sheet_name=0)
+    if isinstance(source, pd.DataFrame):
+        df_raw = source.copy()
+    else:
+        file_path = Path(source)
+        if not file_path.exists():
+            raise FileNotFoundError(f"Deals file not found: {file_path}")
+        df_raw = pd.read_excel(file_path, sheet_name=0)
     raw_count = len(df_raw)
 
     # 1. Identify stray repeated header rows (DQ001)

@@ -50,12 +50,8 @@ class SnapshotService:
             if settings.DEALS_EXCEL_PATH.exists() and settings.WO_EXCEL_PATH.exists():
                 d_df = normalize_deals(settings.DEALS_EXCEL_PATH)
                 w_df = normalize_work_orders(settings.WO_EXCEL_PATH)
-            elif settings.SNAPSHOT_DEALS_PARQUET.exists() and settings.SNAPSHOT_WO_PARQUET.exists():
-                con = duckdb.connect()
-                d_df = con.read_parquet(str(settings.SNAPSHOT_DEALS_PARQUET)).df()
-                w_df = con.read_parquet(str(settings.SNAPSHOT_WO_PARQUET)).df()
             else:
-                raise FileNotFoundError("Neither Excel fixtures nor Parquet snapshots found.")
+                raise FileNotFoundError(f"Fixture datasets not found at {settings.DEALS_EXCEL_PATH} or {settings.WO_EXCEL_PATH}")
 
             self.deals_df = d_df
             self.wo_df = w_df

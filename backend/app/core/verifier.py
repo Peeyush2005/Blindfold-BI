@@ -22,19 +22,26 @@ FACT_TOKEN_REGEX = re.compile(r"\[\[(F\d+)\]\]")
 NUMBER_REGEX = re.compile(r"\b\d+(?:\.\d+)?\b")
 
 # Non-claim structural patterns that should not be audited as arithmetic claims
+# IMPORTANT: Put longer/more specific multi-word patterns before isolated digits or years
 NON_CLAIM_PATTERNS = [
     re.compile(r"\[\[F\d+\]\]", re.IGNORECASE),                         # [[F1]]
     re.compile(r"\bDQ\d{3}\b", re.IGNORECASE),                           # DQ001 - DQ016
+    re.compile(
+        r"\b\d{1,2}(?:st|nd|rd|th)?\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*(?:\s*,?\s*\d{4})?\b",
+        re.IGNORECASE,
+    ),                                                                    # 15 Jan 2026, 15th Jan, 15 January
+    re.compile(
+        r"\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2}(?:st|nd|rd|th)?(?:\s*,?\s*\d{4})?\b",
+        re.IGNORECASE,
+    ),                                                                    # January 15, 2026, Jan 15
+    re.compile(r"\b\d{4}-\d{2}-\d{2}\b"),                                # 2026-01-15
+    re.compile(r"\b(?:30|60|90|180|365)\s*-?\s*days?\b", re.IGNORECASE), # 90 days, 90-day aging thresholds
+    re.compile(r"\b(?:15|16)\s+(?:active\s+)?(?:DQ|data\s+quality)\s+(?:rules?|codes?|checks?|anomalies)\b", re.IGNORECASE),
     re.compile(r"\bQ[1-4](?:\s*FY\d{2}(?:-\d{2})?)?\b", re.IGNORECASE),  # Q1, Q4 FY25-26
     re.compile(r"\bFY\s*\d{2}(?:-\d{2})?\b", re.IGNORECASE),             # FY25-26, FY26
     re.compile(r"\b\d+(?:st|nd|rd|th)\b", re.IGNORECASE),                # 1st, 2nd, 3rd, 4th
     re.compile(r"\btop\s+\d+\b", re.IGNORECASE),                         # top 1, top 3, top 5, top 10
-    re.compile(r"\b(?:19\d{2}|20\d{2})\b"),                              # Years: 2024, 2025, 2026, 2027
-    re.compile(
-        r"\b\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{4}\b",
-        re.IGNORECASE,
-    ),                                                                    # 15 Jan 2026
-    re.compile(r"\b\d{4}-\d{2}-\d{2}\b"),                                # 2026-01-15
+    re.compile(r"\b(?:19\d{2}|20\d{2})\b"),                              # Years: 2024, 2025, 2026, 2027 (after dates)
     re.compile(r"^\s*\d+\.\s+", re.MULTILINE),                           # Numbered list markers: 1. , 2.
 ]
 
@@ -75,6 +82,9 @@ class NumberByReferenceVerifier:
 
     ALLOWED_NUMERALS: Set[float] = {
         0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0,
+        11.0, 12.0, 13.0, 14.0, 15.0, 16.0, 17.0, 18.0, 19.0, 20.0,
+        21.0, 22.0, 23.0, 24.0, 25.0, 26.0, 27.0, 28.0, 29.0, 30.0, 31.0,  # Calendar days / top ranks
+        60.0, 90.0, 180.0, 365.0,  # Aging thresholds
         100.0,
         2023.0, 2024.0, 2025.0, 2026.0, 2027.0,  # Years
     }
@@ -109,6 +119,14 @@ class NumberByReferenceVerifier:
                     for cell in row:
                         if isinstance(cell, (int, float)) and not isinstance(cell, bool):
                             _add_scaled(float(cell))
+            if hasattr(data, "dq") and data.dq:
+                for d in data.dq:
+                    desc = getattr(d, "description", "") or ""
+                    for num_str in NUMBER_REGEX.findall(desc):
+                        try:
+                            _add_scaled(float(num_str))
+                        except ValueError:
+                            pass
             return numbers
 
         def _traverse(val: Any):
@@ -287,6 +305,9 @@ class NumberByReferenceVerifier:
                 if token_pattern in final_text:
                     final_text = final_text.replace(token_pattern, fact.display)
 
+            # Deduplicate repeated unit words resulting from substitution (e.g., "8 deals deals" -> "8 deals")
+            final_text = re.sub(r"\b(deals?|work orders?|orders?|sectors?|records?|rows?)\s+\1\b", r"\1", final_text, flags=re.IGNORECASE)
+
         result.final_text = final_text
         return result
 
@@ -327,7 +348,13 @@ class NumberByReferenceVerifier:
         if status:
             prefix_parts.append(f"with status '{status}'")
 
-        entity_clause = ("For " + " ".join(prefix_parts) + ", ") if prefix_parts else ""
+        if prefix_parts:
+            entity_clause = "For " + " ".join(prefix_parts) + ", "
+        elif question:
+            clean_q = re.sub(r"[?!.]+$", "", question).strip()
+            entity_clause = f"Regarding {clean_q.lower()}, "
+        else:
+            entity_clause = ""
 
         # Primary fact sentence
         primary_statements = [f"{f.label} stands at **{f.display}**" for f in primary_facts]

@@ -21,10 +21,9 @@ class Settings(BaseSettings):
     # File Paths
     PROJECT_ROOT: Path = Path(__file__).resolve().parent.parent.parent
     CONTRACTS_PATH: Path = PROJECT_ROOT / "contracts" / "metric_contract.yaml"
+    SCHEMA_MAP_PATH: Path = PROJECT_ROOT / "contracts" / "schema_map.yaml"
     DEALS_EXCEL_PATH: Path = PROJECT_ROOT / "backend" / "tests" / "fixtures" / "Deal funnel Data.xlsx"
     WO_EXCEL_PATH: Path = PROJECT_ROOT / "backend" / "tests" / "fixtures" / "Work_Order_Tracker Data.xlsx"
-    SNAPSHOT_DEALS_PARQUET: Path = Path(__file__).resolve().parent / "data" / "snapshots" / "deals_snapshot.parquet"
-    SNAPSHOT_WO_PARQUET: Path = Path(__file__).resolve().parent / "data" / "snapshots" / "wo_snapshot.parquet"
 
     # LLM Settings (NVIDIA NIM Free Tier)
     NVIDIA_API_KEY: str = os.getenv("NVIDIA_API_KEY", "")
@@ -37,6 +36,7 @@ class Settings(BaseSettings):
     MONDAY_DEALS_BOARD_ID: str = os.getenv("MONDAY_DEALS_BOARD_ID", "")
     MONDAY_WO_BOARD_ID: str = os.getenv("MONDAY_WO_BOARD_ID", "")
     MONDAY_SIGNING_SECRET: str = os.getenv("MONDAY_SIGNING_SECRET", "")
+    MONDAY_DATA_SOURCE_PRIORITY: str = os.getenv("MONDAY_DATA_SOURCE_PRIORITY", "monday_first")
     CACHE_TTL_SECONDS: int = 600  # 10 minutes
 
     # Security & API Key
@@ -51,6 +51,11 @@ class Settings(BaseSettings):
     AZURE_STORAGE_CONTAINER: str = os.getenv("AZURE_STORAGE_CONTAINER", "blindfold-keys")
 
     # CORS
-    CORS_ORIGINS: list[str] = ["*"]
+    CORS_ORIGINS: list[str] = [
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:5173",
+    ]
 
 settings = Settings()

@@ -17,7 +17,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 logger = logging.getLogger(__name__)
 
 MONDAY_API_URL = "https://api.monday.com/v2"
-API_VERSION = "2026-04"
+API_VERSION = "2024-01"
 DEFAULT_DAILY_BUDGET = 800
 SNAPSHOT_TTL_SECONDS = 600
 
@@ -51,11 +51,15 @@ class MondayClient:
         api_url: str = MONDAY_API_URL,
         daily_budget: int = DEFAULT_DAILY_BUDGET,
         transport: Optional[httpx.AsyncBaseTransport] = None,
+        deals_board_id: Optional[str] = None,
+        wo_board_id: Optional[str] = None,
     ):
         self.api_token = api_token or os.getenv("MONDAY_API_TOKEN", "")
         self.api_url = api_url
         self.daily_budget = daily_budget
         self.transport = transport
+        self.deals_board_id = deals_board_id or os.getenv("MONDAY_DEALS_BOARD_ID", "")
+        self.wo_board_id = wo_board_id or os.getenv("MONDAY_WO_BOARD_ID", "")
         self.calls_today = 0
         self.budget_reset_time = time.time() + 86400
 
@@ -121,6 +125,42 @@ class MondayClient:
                 return {"error": str(data["errors"])}
             return data.get("data", {})
 
+    async def execute_query(self, query: str, variables: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Backward-compatible alias for query()."""
+        return await self.query(query, variables)
+
+    async def test_connection(self) -> Dict[str, Any]:
+        """Test API authentication with a lightweight user profile query."""
+        if not self.is_configured:
+            return {
+                "connected": False,
+                "message": "Monday.com API token is not configured. Running in snapshot mode.",
+            }
+
+        query = """
+        query {
+            me {
+                id
+                name
+                email
+                is_admin
+            }
+        }
+        """
+        result = await self.query(query)
+        if "error" in result or not result.get("me"):
+            return {
+                "connected": False,
+                "error": result.get("error", "Failed to retrieve user profile"),
+            }
+
+        return {
+            "connected": True,
+            "user": result["me"],
+            "deals_board_id": self.deals_board_id,
+            "wo_board_id": self.wo_board_id,
+        }
+
     async def fetch_all_items(self, board_id: str, page_size: int = 500) -> List[Dict[str, Any]]:
         """
         Cursor-paginated retrieval of items from a Monday.com board.
@@ -174,6 +214,17 @@ class MondayClient:
                 break
 
         return all_items
+
+    async def fetch_board_items(self, board_id: str) -> List[Dict[str, Any]]:
+        """Backward-compatible alias for fetch_all_items()."""
+        return await self.fetch_all_items(board_id)
+
+    async def push_data_debt_alerts(self, anomalies: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Audit and prepare actionable data debt alerts for Monday.com items.
+        Strictly forbidden from performing live writes or alerts against upstream boards.
+        """
+        raise WriteForbiddenError("Writing data debt alerts to Monday.com is strictly forbidden by read-only governance.")
 
 
 class FakeMondayTransport(httpx.AsyncBaseTransport, httpx.BaseTransport):
@@ -236,3 +287,7 @@ class FakeMondayTransport(httpx.AsyncBaseTransport, httpx.BaseTransport):
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         return self._generate_response(request)
+
+
+# Export singleton instance
+monday_client = MondayClient()

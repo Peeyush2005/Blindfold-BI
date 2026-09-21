@@ -19,5 +19,8 @@ backend/.env
 **/*.xlsx
 !backend/app/data/snapshots/*.parquet
 backend/tests
+.venv_ci
+storage/
+evals/*.log
 
 

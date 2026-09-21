@@ -241,6 +241,12 @@ class ToolRegistry:
             "Execution status of Work Orders, overdue delivery dates (DQ011), and completed-but-unbilled projects (DQ010).",
         )
         self.register(
+            "work_order_health",
+            workorder_health,
+            "Operations",
+            "Execution status of Work Orders, overdue delivery dates (DQ011), and completed-but-unbilled projects (DQ010).",
+        )
+        self.register(
             "link_deals_to_orders",
             link_deals_to_orders,
             "Operations",
@@ -329,7 +335,10 @@ class ToolRegistry:
         else:
             filtered_args = call_args
 
-        return tool_def.func(**filtered_args)
+        res = tool_def.func(**filtered_args)
+        if hasattr(res, "tool") and res.tool != name:
+            res.tool = name
+        return res
 
     @property
     def mcp_server(self):

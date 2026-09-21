@@ -19,28 +19,41 @@ from pathlib import Path
 from typing import Dict, Any, List, Tuple, Optional
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+backend_dir = PROJECT_ROOT / "backend"
+if str(backend_dir) not in sys.path:
+    sys.path.insert(0, str(backend_dir))
 DEFAULT_QUESTIONS_PATH = PROJECT_ROOT / "evals" / "questions.yaml"
 
 
 def clean_first_sentence(text: str) -> str:
-    """Extract clean first narrative sentence, stripping markdown headers."""
+    """Extract clean first narrative sentence, stripping markdown headers and section preambles."""
     if not text:
         return "N/A"
-    # Remove markdown headers and emojis
     lines = text.strip().split("\n")
     prose_lines = []
     for line in lines:
         stripped = line.strip()
         if not stripped:
             continue
-        if stripped.startswith("#") or stripped.startswith("**"):
-            # Check if this header line also contains prose after newline or bold
-            # e.g., "**🎯 Key Takeaways**\nProse starts here..."
-            cleaned = re.sub(r"^\*{1,3}[^\*]+\*{1,3}\s*", "", stripped)
+        if stripped.startswith("#"):
+            cleaned = re.sub(r"^#+\s*", "", stripped).strip()
+            # If after stripping '#' it was just a label like 'Direct Answer', skip it
+            if cleaned.lower() in ["direct answer", "answer", "executive summary", "key takeaways", "overview"]:
+                continue
+            cleaned = re.sub(r"^(?:direct answer|answer|executive summary|key takeaways)[\s:\-]+", "", cleaned, flags=re.IGNORECASE).strip()
+            if cleaned:
+                prose_lines.append(cleaned)
+        elif stripped.startswith("**"):
+            cleaned = re.sub(r"^\*{1,3}[^\*]+\*{1,3}\s*[:\-]?\s*", "", stripped).strip()
+            if cleaned.lower() in ["direct answer", "answer", "executive summary", "key takeaways", "overview"]:
+                continue
+            cleaned = re.sub(r"^(?:direct answer|answer|executive summary|key takeaways)[\s:\-]+", "", cleaned, flags=re.IGNORECASE).strip()
             if cleaned:
                 prose_lines.append(cleaned)
         else:
-            prose_lines.append(stripped)
+            cleaned = re.sub(r"^(?:direct answer|answer|executive summary|key takeaways)[\s:\-]+", "", stripped, flags=re.IGNORECASE).strip()
+            if cleaned:
+                prose_lines.append(cleaned)
 
     full_prose = " ".join(prose_lines)
     if not full_prose:
@@ -55,7 +68,10 @@ def clean_first_sentence(text: str) -> str:
 
 def run_sse_query(client: httpx.Client, api_url: str, question: str, session_id: str) -> Dict[str, Any]:
     """Execute streaming query and collect tool execution and answer data."""
-    endpoint = f"{api_url.rstrip('/')}/api/v1/chat"
+    if api_url in ["inproc", "local"]:
+        endpoint = "/api/v1/chat"
+    else:
+        endpoint = f"{api_url.rstrip('/')}/api/v1/chat"
     payload = {"question": question, "session_id": session_id}
 
     tools_called: List[Dict[str, Any]] = []
@@ -189,7 +205,20 @@ def main():
     print(header, flush=True)
     print(separator, flush=True)
 
-    with httpx.Client() as client:
+    if api_url in ["inproc", "local"]:
+        from starlette.testclient import TestClient
+        from app.main import app
+        from app.data.db import db
+        from app.data.adapter import adapter
+        from app.core.orchestrator import orchestrator
+        db.init_db()
+        adapter.load_data()
+        orchestrator.init_catalog()
+        client_cm = TestClient(app)
+    else:
+        client_cm = httpx.Client()
+
+    with client_cm as client:
         for idx, q_item in enumerate(questions, 1):
             q_text = q_item["question"]
             is_inherited = q_item.get("context_inherited", False)

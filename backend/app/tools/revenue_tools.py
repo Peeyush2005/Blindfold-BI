@@ -94,19 +94,8 @@ def revenue_ladder(
     facts = [
         Fact(
             id="F1",
-            metric="wo_contracted_value",
-            label="Work Orders Contracted (Excl GST)",
-            value=contracted,
-            unit="INR",
-            display=format_inr(contracted),
-            n=wo["wo_count"],
-            must_mention=True,
-            role="primary",
-        ),
-        Fact(
-            id="F2",
-            metric="wo_billed_value",
-            label="Invoiced Billed Value (Excl GST)",
+            metric="billed_work_orders",
+            label="Billed Work Orders",
             value=billed,
             unit="INR",
             display=format_inr(billed),
@@ -115,17 +104,37 @@ def revenue_ladder(
             role="primary",
         ),
         Fact(
+            id="F2",
+            metric="wo_contracted_value",
+            label="Work Orders Contracted",
+            value=contracted,
+            unit="INR",
+            display=format_inr(contracted),
+            n=wo["wo_count"],
+            must_mention=True,
+            role="support",
+        ),
+        Fact(
             id="F3",
+            metric="realization_rate_pct",
+            label="Revenue Realization Rate",
+            value=round(realization_rate, 1),
+            unit="pct",
+            display=format_pct(realization_rate),
+            role="support",
+        ),
+        Fact(
+            id="F4",
             metric="wo_collected_value",
             label="Collected Cash Receipts (Incl GST)",
             value=collected,
             unit="INR",
             display=format_inr(collected),
             must_mention=True,
-            role="primary",
+            role="support",
         ),
         Fact(
-            id="F4",
+            id="F5",
             metric="wo_receivable_value",
             label="Net Accounts Receivable",
             value=receivable,
@@ -136,21 +145,12 @@ def revenue_ladder(
             role="support",
         ),
         Fact(
-            id="F5",
+            id="F6",
             metric="unbilled_backlog",
             label="Unbilled Backlog (Excl GST)",
             value=unbilled_backlog,
             unit="INR",
             display=format_inr(unbilled_backlog),
-            role="support",
-        ),
-        Fact(
-            id="F6",
-            metric="realization_rate_pct",
-            label="Revenue Realization Rate",
-            value=round(realization_rate, 1),
-            unit="pct",
-            display=format_pct(realization_rate),
             role="support",
         ),
         Fact(
@@ -210,9 +210,8 @@ def revenue_ladder(
     )
 
     template = (
-        f"Revenue realization analysis shows [[F1]] in contracted work orders, of which [[F2]] has been billed "
-        f"([[F6]] realization rate) and [[F3]] collected in cash. Outstanding net receivables stand at [[F4]], "
-        f"leaving [[F5]] in unbilled backlog."
+        f"We have billed [[F1]] against total contracted work orders of [[F2]], achieving a revenue realization rate "
+        f"of [[F3]] with [[F4]] collected in cash. Net accounts receivable stand at [[F5]], with [[F6]] in unbilled backlog."
     )
 
     receipt = make_trust_receipt(
@@ -251,10 +250,11 @@ def revenue_ladder(
 def receivables_summary(
     sector: Optional[str] = None,
     top_n: int = 10,
+    metric: Optional[str] = None,
 ) -> ToolResult:
     """
     Analyzes outstanding Accounts Receivable, credit balances (negative receivables),
-    and priority debtor accounts.
+    collected cash receipts, and priority debtor accounts.
     """
     duckdb_store.initialize()
 
@@ -272,6 +272,8 @@ def receivables_summary(
         SELECT
             COUNT(*) as total_wo,
             COALESCE(SUM(receivable_amount), 0.0) as total_receivable,
+            COALESCE(SUM(collected_incl_gst), 0.0) as total_collected,
+            COALESCE(SUM(billed_excl_gst), 0.0) as total_billed,
             COUNT(CASE WHEN receivable_amount > 0 THEN 1 END) as positive_debtors_count,
             COALESCE(SUM(CASE WHEN receivable_amount > 0 THEN receivable_amount END), 0.0) as positive_debtors_sum,
             COUNT(CASE WHEN receivable_amount < 0 THEN 1 END) as credit_notes_count,
@@ -281,8 +283,9 @@ def receivables_summary(
     """
     rows, dur1, _ = duckdb_store.query(sql, params)
     agg = rows[0] if rows else {
-        "total_wo": 0, "total_receivable": 0.0, "positive_debtors_count": 0,
-        "positive_debtors_sum": 0.0, "credit_notes_count": 0, "credit_notes_sum": 0.0
+        "total_wo": 0, "total_receivable": 0.0, "total_collected": 0.0, "total_billed": 0.0,
+        "positive_debtors_count": 0, "positive_debtors_sum": 0.0,
+        "credit_notes_count": 0, "credit_notes_sum": 0.0
     }
 
     # Top debtors (masked clients)
@@ -301,72 +304,118 @@ def receivables_summary(
     """
     d_rows, dur2, _ = duckdb_store.query(debtors_sql, params)
 
-    facts = [
-        Fact(
-            id="F1",
-            metric="wo_receivable_value",
-            label="Net Accounts Receivable",
-            value=agg["total_receivable"],
-            unit="INR",
-            display=format_inr(agg["total_receivable"]),
-            must_mention=True,
-            role="primary",
-        ),
-        Fact(
-            id="F2",
-            metric="credit_notes_count",
-            label="Credit Balance Work Orders (DQ009)",
-            value=agg["credit_notes_count"],
-            unit="count",
-            display=f"{agg['credit_notes_count']} credits",
-            caveat_codes=["DQ009"],
-            role="caveat",
-        ),
-        Fact(
-            id="F3",
-            metric="gross_receivable_positive",
-            label="Gross Positive Receivables",
-            value=agg["positive_debtors_sum"],
-            unit="INR",
-            display=format_inr(agg["positive_debtors_sum"]),
-            role="support",
-        ),
-    ]
+    if metric == "collected_cash":
+        total_coll = agg["total_collected"]
+        facts = [
+            Fact(
+                id="F1",
+                metric="collected_cash",
+                label="Collected Cash Receipts (Incl GST)",
+                value=total_coll,
+                unit="INR",
+                display=format_inr(total_coll),
+                n=agg["total_wo"],
+                must_mention=True,
+                role="primary",
+            ),
+            Fact(
+                id="F2",
+                metric="total_billed_value",
+                label="Total Invoiced / Billed Value",
+                value=agg["total_billed"],
+                unit="INR",
+                display=format_inr(agg["total_billed"]),
+                role="support",
+            ),
+            Fact(
+                id="F3",
+                metric="outstanding_receivables",
+                label="Outstanding Net Receivables",
+                value=agg["total_receivable"],
+                unit="INR",
+                display=format_inr(agg["total_receivable"]),
+                role="support",
+            ),
+        ]
+        template = (
+            f"Total cash collected across work orders stands at [[F1]] (inclusive of GST) across {agg['total_wo']} work orders, "
+            f"against total billed revenue of [[F2]], leaving [[F3]] in pending net receivables."
+        )
+    else:
+        facts = [
+            Fact(
+                id="F1",
+                metric="wo_receivable_value",
+                label="Outstanding Net Receivables",
+                value=agg["total_receivable"],
+                unit="INR",
+                display=format_inr(agg["total_receivable"]),
+                must_mention=True,
+                role="primary",
+            ),
+            Fact(
+                id="F2",
+                metric="credit_notes_count",
+                label="Credit Balance Work Orders (DQ009)",
+                value=agg["credit_notes_count"],
+                unit="count",
+                display=f"{agg['credit_notes_count']} credits",
+                caveat_codes=["DQ009"],
+                role="caveat",
+            ),
+            Fact(
+                id="F3",
+                metric="gross_receivable_positive",
+                label="Gross Positive Receivables",
+                value=agg["positive_debtors_sum"],
+                unit="INR",
+                display=format_inr(agg["positive_debtors_sum"]),
+                role="support",
+            ),
+            Fact(
+                id="F4",
+                metric="outstanding_receivables",
+                label="Outstanding Net Receivables",
+                value=agg["total_receivable"],
+                unit="INR",
+                display=format_inr(agg["total_receivable"]),
+                role="support",
+            ),
+        ]
+        template = (
+            f"Outstanding net accounts receivable stand at [[F1]] across {agg['total_wo']} work orders. "
+            f"This includes [[F3]] in gross positive receivables, offset by [[F2]] with credit balances (DQ009)."
+        )
 
-    debtor_data = [
-        [r["client_id"], r["sector"], r["wo_count"], format_inr(r["billed_val"]), format_inr(r["total_receivable"])]
+    d_headers = ["Client Token", "Sector", "Work Orders", "Total Receivable", "Billed Value"]
+    d_data = [
+        [r["client_id"], r["sector"], r["wo_count"], format_inr(r["total_receivable"]), format_inr(r["billed_val"])]
         for r in d_rows
     ]
     tbl = Table(
         id="t_top_debtors",
-        title="Top Accounts Receivable Balances",
-        headers=["Client Token", "Sector", "Work Orders", "Total Invoiced", "Outstanding Receivable"],
-        rows=debtor_data,
-        footnote="Client tokens are pseudonymized for privacy.",
+        title=f"Top {top_n} Debtors by Outstanding Balance",
+        headers=d_headers,
+        rows=d_data,
+        footnote="Client tokens pseudonymized via HMAC-SHA256 Blindfold Gateway.",
     )
 
     chart = ChartSpec(
-        id="chart_receivables_by_client",
+        id="chart_receivables_aging",
         chart_type="bar",
-        title="Top Accounts Receivable by Client Token",
+        title="Top Debtors by Outstanding Balance",
         option={
             "tooltip": {"trigger": "axis"},
             "xAxis": {"type": "category", "data": [r["client_id"] for r in d_rows]},
-            "yAxis": {"type": "value"},
+            "yAxis": {"type": "value", "name": "INR"},
             "series": [
                 {
-                    "name": "Receivable (Cr)",
                     "type": "bar",
-                    "data": [round(r["total_receivable"] / 1e7, 2) for r in d_rows],
-                    "itemStyle": {"color": "#ef4444"},
+                    "data": [r["total_receivable"] for r in d_rows],
+                    "itemStyle": {"color": "#3b82f6"},
                 }
-            ]
-        }
-    )
-
-    template = (
-        f"Total net accounts receivable is [[F1]]. This reflects [[F3]] in outstanding invoices "
-        f"netted against [[F2]] credit/overbilling entries (DQ009)."
+            ],
+        },
     )
 
     receipt = make_trust_receipt(
@@ -439,59 +488,101 @@ def sector_performance(
     """
     rows, dur, _ = duckdb_store.query(sql)
 
-    facts = [
-        Fact(
-            id="F1",
-            metric="sectors_analyzed",
-            label="Sectors Evaluated",
-            value=len(rows),
-            unit="count",
-            display=f"{len(rows)} sectors",
-            role="support",
-        ),
-    ]
+    lead_sec = rows[0] if rows else {
+        "sector": "None", "open_pipeline_val": 0.0, "won_deal_val": 0.0,
+        "contracted_excl_gst": 0.0, "open_deals": 0
+    }
 
-    if rows:
-        lead_sec = rows[0]
-        if metric in ['open_pipeline', 'pipeline']:
-            facts.append(
-                Fact(
-                    id="F2",
-                    metric="top_sector",
-                    label=f"Leading Sector ({lead_sec['sector']}) Open Pipeline",
-                    value=lead_sec["open_pipeline_val"],
-                    unit="INR",
-                    display=format_inr(lead_sec["open_pipeline_val"]),
-                    role="primary",
-                    must_mention=True,
-                )
-            )
-        elif metric in ['won', 'won_deals', 'won_value']:
-            facts.append(
-                Fact(
-                    id="F2",
-                    metric="top_sector_won",
-                    label=f"Leading Sector ({lead_sec['sector']}) Won Value",
-                    value=lead_sec["won_deal_val"],
-                    unit="INR",
-                    display=format_inr(lead_sec["won_deal_val"]),
-                    role="primary",
-                    must_mention=True,
-                )
-            )
-        else:
-            facts.append(
-                Fact(
-                    id="F2",
-                    metric="leading_sector_order_book",
-                    label=f"Leading Sector ({lead_sec['sector']}) Order Book",
-                    value=lead_sec["contracted_excl_gst"],
-                    unit="INR",
-                    display=format_inr(lead_sec["contracted_excl_gst"]),
-                    role="primary",
-                    must_mention=True,
-                )
-            )
+    if metric in ['open_pipeline', 'pipeline']:
+        top_val = lead_sec["open_pipeline_val"]
+        facts = [
+            Fact(
+                id="F1",
+                metric="top_sector",
+                label=f"Leading Sector ({lead_sec['sector']})",
+                value=top_val,
+                unit="INR",
+                display=f"{lead_sec['sector']}: {format_inr(top_val)}",
+                role="primary",
+                must_mention=True,
+            ),
+            Fact(
+                id="F2",
+                metric="sectors_analyzed",
+                label="Sectors Evaluated",
+                value=len(rows),
+                unit="count",
+                display=f"{len(rows)} sectors",
+                role="support",
+            ),
+            Fact(
+                id="F3",
+                metric="leading_sector_open_deals",
+                label=f"Open Deals in {lead_sec['sector']}",
+                value=lead_sec["open_deals"],
+                unit="count",
+                display=f"{lead_sec['open_deals']} open deals",
+                role="support",
+            ),
+        ]
+        template = (
+            f"The sector with the largest open pipeline is [[F1]] across [[F3]]. "
+            f"A total of [[F2]] were analyzed across the business."
+        )
+    elif metric in ['won', 'won_deals', 'won_value']:
+        top_val = lead_sec["won_deal_val"]
+        facts = [
+            Fact(
+                id="F1",
+                metric="top_sector_won",
+                label=f"Leading Sector ({lead_sec['sector']})",
+                value=top_val,
+                unit="INR",
+                display=f"{lead_sec['sector']}: {format_inr(top_val)}",
+                role="primary",
+                must_mention=True,
+            ),
+            Fact(
+                id="F2",
+                metric="sectors_analyzed",
+                label="Sectors Evaluated",
+                value=len(rows),
+                unit="count",
+                display=f"{len(rows)} sectors",
+                role="support",
+            ),
+        ]
+        template = (
+            f"The sector leading in won deal value is [[F1]]. "
+            f"A total of [[F2]] were evaluated across the business."
+        )
+    else:
+        top_val = lead_sec["contracted_excl_gst"]
+        facts = [
+            Fact(
+                id="F1",
+                metric="leading_sector_order_book",
+                label=f"Leading Sector ({lead_sec['sector']})",
+                value=top_val,
+                unit="INR",
+                display=f"{lead_sec['sector']}: {format_inr(top_val)}",
+                role="primary",
+                must_mention=True,
+            ),
+            Fact(
+                id="F2",
+                metric="sectors_analyzed",
+                label="Sectors Evaluated",
+                value=len(rows),
+                unit="count",
+                display=f"{len(rows)} sectors",
+                role="support",
+            ),
+        ]
+        template = (
+            f"Cross-board evaluation across [[F2]] sectors shows [[F1]] leading in total contracted order book. "
+            f"Detailed reconciliation highlights sector-by-sector pipeline vs billing realization."
+        )
 
     tbl_data = [
         [
@@ -534,11 +625,6 @@ def sector_performance(
         }
     )
 
-    template = (
-        f"Cross-board evaluation across [[F1]] sectors shows [[F2]] leading in total order book. "
-        f"Detailed reconciliation highlights sector-by-sector pipeline vs billing realization."
-    )
-
     receipt = make_trust_receipt(
         tool_name="sector_performance",
         sql_executed=sql,
@@ -573,9 +659,9 @@ def sector_performance(
 def get_revenue_realization_summary(sector: Optional[str] = None) -> Dict[str, Any]:
     res = revenue_ladder(sector=sector)
     contracted = next((f.value for f in res.facts if f.metric == "wo_contracted_value"), 0.0)
-    billed = next((f.value for f in res.facts if f.metric == "wo_billed_value"), 0.0)
+    billed = next((f.value for f in res.facts if f.metric in ["wo_billed_value", "billed_work_orders"]), 0.0)
     collected = next((f.value for f in res.facts if f.metric == "wo_collected_value"), 0.0)
-    receivable = next((f.value for f in res.facts if f.metric == "wo_receivable_value"), 0.0)
+    receivable = next((f.value for f in res.facts if f.metric in ["wo_receivable_value", "outstanding_receivables"]), 0.0)
     unbilled = next((f.value for f in res.facts if f.metric == "unbilled_backlog"), 0.0)
     realization = next((f.value for f in res.facts if f.metric == "realization_rate_pct"), 0.0)
     # Collection efficiency: collected_incl_gst / billed_incl_gst (71.36%)
