@@ -16,6 +16,7 @@ from app.contracts import (
     DQEntry,
     ToolResult,
     format_count,
+    format_inr,
 )
 from app.tools.receipt import make_trust_receipt
 from app.tools.chips import generate_followup_chips
@@ -51,11 +52,11 @@ def data_quality_report(
     facts = [
         Fact(
             id="F1",
-            metric="total_dq_rules_flagged",
-            label="Flagged Data Quality Rules",
+            metric="total_anomalies",
+            label="Total Data Quality Anomalies",
             value=total_issues,
             unit="count",
-            display=f"{total_issues} rules",
+            display=f"{total_issues} anomalies ({total_affected} rows affected)",
             must_mention=True,
             role="primary",
         ),
@@ -67,7 +68,7 @@ def data_quality_report(
             unit="count",
             display=f"{high_sev} high severity",
             must_mention=True,
-            role="primary",
+            role="support",
         ),
         Fact(
             id="F3",
@@ -163,6 +164,7 @@ def data_debt_list(
     board: Optional[str] = None,
     issue_code: Optional[str] = None,
     severity: Optional[str] = None,
+    type: Optional[str] = None,
     limit: int = 50,
     format: str = "json",
 ) -> ToolResult:
@@ -171,6 +173,93 @@ def data_debt_list(
     unassigned owners, unbilled completed work orders, negative receivables) with remediation advice.
     """
     duckdb_store.initialize()
+
+    if type and type.strip().lower() in ["stale_open_deals", "stale_deals", "stale"]:
+        sql = """
+            SELECT
+                deal_alias,
+                client_id,
+                sector,
+                owner_id,
+                deal_value,
+                tentative_close_date,
+                is_stale
+            FROM deals
+            WHERE status = 'Open' AND is_stale = true
+            ORDER BY deal_value DESC
+        """
+        rows, dur, _ = duckdb_store.query(sql)
+        stale_cnt = len(rows)
+        stale_val = sum(r["deal_value"] or 0.0 for r in rows)
+
+        facts = [
+            Fact(
+                id="F1",
+                metric="stale_deals_count",
+                label="Stale Open Deals (DQ005)",
+                value=stale_cnt,
+                unit="count",
+                display=f"{stale_cnt} stale deals",
+                must_mention=True,
+                role="primary",
+                caveat_codes=["DQ005"],
+            ),
+            Fact(
+                id="F2",
+                metric="stale_deals_value",
+                label="Stale Pipeline Value",
+                value=stale_val,
+                unit="INR",
+                display=format_inr(stale_val),
+                role="support",
+                caveat_codes=["DQ005"],
+            ),
+        ]
+
+        stale_headers = ["Deal Token", "Client Token", "Sector", "Owner Token", "Tentative Close", "Deal Value"]
+        stale_rows = [
+            [
+                r["deal_alias"],
+                r["client_id"],
+                r["sector"],
+                r["owner_id"],
+                str(r["tentative_close_date"])[:10] if r["tentative_close_date"] else "N/A",
+                format_inr(r["deal_value"] or 0.0),
+            ]
+            for r in rows[:limit]
+        ]
+
+        t1 = Table(
+            id="t_stale_deals",
+            title="Stale Open Deals Ledger (DQ005)",
+            headers=stale_headers,
+            rows=stale_rows,
+            footnote="Open deals with no activity for >90 days or overdue tentative close date.",
+        )
+
+        template = (
+            f"Identified [[F1]] with no recent activity or past tentative close date, "
+            f"locking [[F2]] in inactive pipeline risk (DQ005)."
+        )
+
+        receipt = make_trust_receipt(
+            tool_name="data_debt_list",
+            sql_executed=sql.strip(),
+            duration_ms=dur,
+            row_count=stale_cnt,
+            caveats=["DQ005: Stale pipeline deals excluded from high-confidence forecast."],
+        )
+
+        return ToolResult(
+            tool="data_debt_list",
+            facts=facts,
+            tables=[t1],
+            charts=[],
+            dq=[],
+            followups=[],
+            template=template,
+            audit=receipt,
+        )
 
     all_anomalies = dq_ledger.get_all()
     filtered = []

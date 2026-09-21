@@ -120,27 +120,51 @@ class PipelineOrchestrator:
             is_security_refusal = False
             is_scope_decline = False
 
-            # Security Policy: prompt injection, bypass instructions, bulk entity dumping
-            jailbreak_terms = ["ignore your instructions", "ignore previous instructions", "bypass instructions", "system prompt", "dump all"]
+            # Security Policy: prompt injection, bypass instructions, bulk entity dumping, DDL injection
+            jailbreak_terms = [
+                "ignore your instructions", "ignore previous instructions", "ignore all previous instructions",
+                "bypass instructions", "system prompt", "dump all", "drop table", "drop database", "alter table",
+                "delete from", "insert into", "union select"
+            ]
             bulk_terms = ["list all clients", "all client names", "dump clients", "export all clients", "list every client"]
             if any(term in lowered_query for term in jailbreak_terms) or any(term in lowered_query for term in bulk_terms):
                 is_security_refusal = True
                 s1_meta["security_refusal"] = True
                 s1_meta["reason"] = "Prompt injection / bulk entity extraction prevention"
 
-            # Scope Policy: financial ledger / COGS / profit margin / expenses
-            out_of_scope_terms = ["profit margin", "cogs", "cost of goods", "burn rate", "overhead", "salaries", "operating expense", "ebitda", "net profit"]
+            # Scope Policy: financial ledger / COGS / profit margin / general domain / expenses
+            out_of_scope_terms = [
+                "profit margin", "cogs", "cost of goods", "burn rate", "overhead", "salaries",
+                "operating expense", "ebitda", "net profit", "weather", "recipe", "joke", "movie",
+                "poem", "who won the", "cricket", "football"
+            ]
             if any(term in lowered_query for term in out_of_scope_terms):
                 is_scope_decline = True
                 s1_meta["scope_decline"] = True
-                s1_meta["reason"] = "Profit margin, COGS, and operating expenses are outside monday.com CRM scope"
+                s1_meta["reason"] = "Query is outside commercial drone operations and monday.com CRM scope"
 
             # Indian Fiscal Period Resolution (as of 15 Jan 2026 -> Q4 FY25-26)
-            extracted_period = "Q4 FY25-26"
-            for p_cand in ["fy24-25", "fy25-26", "fy26-27", "q1", "q2", "q3", "q4"]:
-                if p_cand in lowered_query:
-                    extracted_period = p_cand.upper()
-                    break
+            extracted_period = None
+            if any(k in lowered_query for k in ["this quarter", "current quarter", "quarter", "q1", "q2", "q3", "q4", "fy24-25", "fy25-26", "fy26-27"]):
+                if any(k in lowered_query for k in ["this quarter", "current quarter", "q4"]):
+                    extracted_period = "Q4 FY25-26"
+                elif "q3" in lowered_query:
+                    extracted_period = "Q3 FY25-26"
+                elif "q2" in lowered_query:
+                    extracted_period = "Q2 FY25-26"
+                elif "q1" in lowered_query:
+                    extracted_period = "Q1 FY25-26"
+                elif "fy25-26" in lowered_query:
+                    extracted_period = "FY25-26"
+                elif "fy24-25" in lowered_query:
+                    extracted_period = "FY24-25"
+                elif "fy26-27" in lowered_query:
+                    extracted_period = "FY26-27"
+
+            # Deal type extraction (e.g. Tender bids/deals)
+            extracted_deal_type = None
+            if any(k in lowered_query for k in ["tender", "tenders", "bid", "bids"]):
+                extracted_deal_type = "Tender"
 
             # Sector canonical grouping (Energy = Renewables + Powerline)
             sector_map = {
@@ -160,8 +184,6 @@ class PipelineOrchestrator:
                 "agriculture": "Agriculture",
                 "security": "Security & Surveillance",
                 "surveillance": "Security & Surveillance",
-                "tender": "Tender",
-                "tenders": "Tender",
             }
             extracted_sector = None
             for kw, canonical in sector_map.items():
@@ -259,6 +281,8 @@ class PipelineOrchestrator:
                 tool_params["sector"] = extracted_sector
             if extracted_period:
                 tool_params["period"] = extracted_period
+            if extracted_deal_type:
+                tool_params["deal_type"] = extracted_deal_type
 
             # Attempt LLM Planning with Tool Schemas
             plan_start = time.time()
@@ -270,10 +294,17 @@ class PipelineOrchestrator:
                     plan_result = await llm_client.plan_query(anonymized_query)
                     if plan_result and plan_result.get("tool") in registry._tools:
                         tool_name = plan_result["tool"]
+                        tool_params = {}
                         p_args = plan_result.get("parameters", {})
                         for k, v in p_args.items():
                             if v is not None and str(v).strip().lower() not in ["none", "null", "undefined", "n/a", ""]:
                                 tool_params[k] = v
+                        if extracted_deal_type and "deal_type" not in tool_params and tool_name == "pipeline_summary":
+                            tool_params["deal_type"] = extracted_deal_type
+                        if extracted_period and "period" not in tool_params:
+                            tool_params["period"] = extracted_period
+                        if extracted_sector and "sector" not in tool_params:
+                            tool_params["sector"] = extracted_sector
                         llm_plan_success = True
                 except Exception as e:
                     logger.warning(f"LLM planner failed: {e}. Falling back to deterministic router.")
@@ -283,14 +314,36 @@ class PipelineOrchestrator:
 
             # Deterministic Routing Fallback if LLM unavailable, off, or failed
             if not llm_plan_success:
-                if any(k in lowered_query for k in ["conversion", "deal to work order", "link", "linkage", "cross board", "cross-board", "fk", "foreign key"]):
-                    tool_name = "link_deals_to_orders"
-                elif any(k in lowered_query for k in ["sector", "energy", "cross-board", "comparison by sector", "multi-sector"]) or (extracted_sector and any(k in lowered_query for k in ["pipeline", "revenue", "breakdown", "quarter", "performance"])):
-                    tool_name = "sector_performance"
-                elif any(k in lowered_query for k in ["revenue", "billed", "contracted", "collected", "waterfall", "ladder"]):
-                    tool_name = "revenue_ladder"
-                elif any(k in lowered_query for k in ["receivable", "debtor", "aging", "overdue", "credit note"]):
+                tool_params = {}
+                if any(k in lowered_query for k in ["tender", "tenders", "bid", "bids"]):
+                    tool_name = "pipeline_summary"
+                    tool_params["deal_type"] = "Tender"
+                elif any(k in lowered_query for k in ["cash", "collected", "money received"]):
                     tool_name = "receivables_summary"
+                    tool_params["metric"] = "collected_cash"
+                elif any(k in lowered_query for k in ["stale", "inactive", "stalled", "aged deals", "idle deals"]):
+                    tool_name = "data_debt_list"
+                    tool_params["type"] = "stale_open_deals"
+                elif any(k in lowered_query for k in ["ongoing", "active", "in progress", "in-progress"]) and any(k in lowered_query for k in ["work order", "order", "delivery", "project"]):
+                    tool_name = "work_order_health"
+                    tool_params["status"] = "Ongoing"
+                elif any(k in lowered_query for k in ["rank", "biggest", "top sector", "largest sector", "compare sector"]):
+                    tool_name = "sector_performance"
+                    tool_params["metric"] = "open_pipeline"
+                    if any(k in lowered_query for k in ["biggest", "top 1", "largest", "leader"]):
+                        tool_params["top_n"] = 1
+                elif any(k in lowered_query for k in ["conversion", "deal to work order", "link", "linkage", "cross board", "cross-board", "fk", "foreign key", "join deals"]):
+                    tool_name = "link_deals_to_orders"
+                elif extracted_sector and any(k in lowered_query for k in ["pipeline", "deals", "funnel", "open"]):
+                    tool_name = "pipeline_summary"
+                    tool_params["sector"] = extracted_sector
+                    if extracted_period:
+                        tool_params["period"] = extracted_period
+                elif any(k in lowered_query for k in ["revenue", "billed", "contracted", "waterfall", "ladder"]):
+                    tool_name = "revenue_ladder"
+                elif any(k in lowered_query for k in ["receivable", "debtor", "aging", "overdue", "credit note", "outstanding"]):
+                    tool_name = "receivables_summary"
+                    tool_params["metric"] = "outstanding_receivables"
                 elif any(k in lowered_query for k in ["brief", "executive", "leadership", "kpi", "pulse"]):
                     tool_name = "leadership_brief"
                 elif any(k in lowered_query for k in ["win rate", "win loss", "loss", "closed"]):
@@ -298,7 +351,7 @@ class PipelineOrchestrator:
                 elif any(k in lowered_query for k in ["rep", "owner", "quota", "salesperson", "bd"]):
                     tool_name = "owner_performance"
                 elif any(k in lowered_query for k in ["delay", "health", "execution", "work order", "backlog", "unbilled"]):
-                    tool_name = "workorder_health"
+                    tool_name = "work_order_health"
                 elif any(k in lowered_query for k in ["compare", "growth", "versus", "variance"]):
                     tool_name = "compare_periods"
                 elif any(k in lowered_query for k in ["explain", "definition", "formula", "metric"]):
@@ -309,8 +362,14 @@ class PipelineOrchestrator:
                     tool_name = "data_debt_list"
                 elif any(k in lowered_query for k in ["help", "tools", "capabilities", "what can you do"]):
                     tool_name = "list_capabilities"
+                elif any(k in lowered_query for k in ["sector", "cross-board", "comparison by sector", "multi-sector"]):
+                    tool_name = "sector_performance"
                 else:
                     tool_name = "pipeline_summary"
+                    if extracted_sector:
+                        tool_params["sector"] = extracted_sector
+                    if extracted_period:
+                        tool_params["period"] = extracted_period
 
             # Update structured intent with chosen tool and params, and persist in 2-turn memory
             structured_intent.tool_name = tool_name
@@ -909,10 +968,8 @@ class PipelineOrchestrator:
         """Generates appropriate policy answer for declined scope or refused security requests."""
         if is_security_refusal:
             prose = (
-                "### 🛡️ Security Policy Enforcement\n\n"
-                "**Request Refused**: System instructions cannot be bypassed, and bulk client entity extraction "
-                "or data dumping is strictly prohibited under Blindfold Privacy Gateway governance.\n\n"
-                "All identifiers are protected with session-scoped HMAC surrogate tokens to prevent data exfiltration."
+                "**Security Policy:** System instructions, prompt extraction, database DDL operations, and bulk entity data dumping cannot be performed under Blindfold Privacy Gateway governance as of 15 Jan 2026.\n\n"
+                "All entity identifiers (client IDs, owner codes, and deal aliases) are protected with session-scoped HMAC surrogate tokens to prevent unauthorized exfiltration and restricted access."
             )
             note_text = "Security Policy: Request blocked due to bulk entity enumeration or prompt override attempt."
             chips = [
@@ -922,13 +979,10 @@ class PipelineOrchestrator:
             ]
         else:
             prose = (
-                "### ℹ️ Out of Scope Query\n\n"
-                "**Question Declined**: Blindfold BI scope is strictly constrained to commercial pipeline, "
-                "billing, and collections data synchronized from monday.com boards.\n\n"
-                "Profit margin, Cost of Goods Sold (COGS), and operating expenses are tracked in financial and "
-                "accounting ERP systems (e.g. Tally, Zoho Books) and are not present in these operational boards."
+                "**Scope Notice:** Profit margins, Cost of Goods Sold (COGS), general knowledge queries (such as weather), and operating expenses are outside the scope of commercial drone operations tracked on our monday.com commercial and operational boards as of 15 Jan 2026.\n\n"
+                "Blindfold BI tracks commercial drone pipeline opportunities, contracted work orders, and billing collections. For profitability, operating expenses, and net margins, consult corporate accounting ERP systems (e.g. Tally or Zoho Books)."
             )
-            note_text = "Out of Scope: Profit margins and company expenses are outside monday.com board scope."
+            note_text = "Scope Notice: Profit margins, general domain queries, and company expenses are outside monday.com board scope."
             chips = [
                 SuggestionChipV1(label="📊 Revenue Realization Ladder", query="Show me the revenue realization ladder"),
                 SuggestionChipV1(label="💰 Accounts Receivable Aging", query="What is our current receivables aging?"),

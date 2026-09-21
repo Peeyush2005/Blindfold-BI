@@ -44,8 +44,6 @@ class DuckDBStore:
             p = deals_path or settings.DEALS_EXCEL_PATH
             if p and p.exists():
                 self.deals_df = normalize_deals(p)
-            elif settings.SNAPSHOT_DEALS_PARQUET.exists():
-                self.deals_df = duckdb.read_parquet(str(settings.SNAPSHOT_DEALS_PARQUET)).df()
             else:
                 raise FileNotFoundError(f"Deals dataset not found at {p}")
 
@@ -55,8 +53,6 @@ class DuckDBStore:
             p = wo_path or settings.WO_EXCEL_PATH
             if p and p.exists():
                 self.wo_df = normalize_work_orders(p)
-            elif settings.SNAPSHOT_WO_PARQUET.exists():
-                self.wo_df = duckdb.read_parquet(str(settings.SNAPSHOT_WO_PARQUET)).df()
             else:
                 raise FileNotFoundError(f"Work orders dataset not found at {p}")
 

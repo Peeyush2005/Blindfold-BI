@@ -25,6 +25,7 @@ from app.data.normalize.common import DEFAULT_AS_OF_DATE
 def workorder_health(
     sector: Optional[str] = None,
     status_filter: Optional[str] = None,
+    status: Optional[str] = None,
     period: Optional[str] = None,
 ) -> ToolResult:
     """
@@ -45,8 +46,9 @@ def workorder_health(
         conditions.append("LOWER(sector) = LOWER(?)")
         params.append(canonical_sec)
 
-    if status_filter:
-        sf = status_filter.strip().lower()
+    effective_status = status or status_filter
+    if effective_status:
+        sf = effective_status.strip().lower()
         if sf == "completed_unbilled":
             conditions.append("execution_status = 'Completed' AND billed_excl_gst = 0 AND amount_excl_gst > 0")
         elif sf == "delayed":
@@ -117,69 +119,116 @@ def workorder_health(
     completed_cnt = completed_row["count"] if completed_row else 0
     completion_rate = (completed_cnt / total_orders * 100) if total_orders > 0 else 0.0
 
-    facts = [
-        Fact(
-            id="F1",
-            metric="total_work_orders",
-            label="Total Work Orders",
-            value=total_orders,
-            unit="count",
-            display=f"{total_orders} work orders",
-            n=total_orders,
-            must_mention=True,
-            role="primary" if status_filter != "completed_unbilled" else "support",
-        ),
-        Fact(
-            id="F2",
-            metric="completed_work_orders_count",
-            label="Completed Work Orders",
-            value=completed_cnt,
-            unit="count",
-            display=f"{completed_cnt} completed",
-            n=completed_cnt,
-            role="support",
-        ),
-        Fact(
-            id="F3",
-            metric="completion_rate_pct",
-            label="Operations Completion Rate",
-            value=round(completion_rate, 1),
-            unit="pct",
-            display=format_pct(completion_rate),
-            role="support",
-        ),
-        Fact(
-            id="F4",
-            metric="delayed_work_orders_count",
-            label="Delayed Delivery Work Orders (DQ011)",
-            value=delayed_count,
-            unit="count",
-            display=f"{delayed_count} delayed",
-            caveat_codes=["DQ011"],
-            must_mention=True if delayed_count > 0 else False,
-            role="caveat",
-        ),
-        Fact(
-            id="F5",
-            metric="completed_unbilled_count",
-            label="Completed But Unbilled Orders (DQ010)",
-            value=unbilled_comp_count,
-            unit="count",
-            display=f"{unbilled_comp_count} orders",
-            caveat_codes=["DQ010"],
-            role="caveat" if status_filter != "completed_unbilled" else "support",
-        ),
-        Fact(
-            id="F6",
-            metric="completed_unbilled_value",
-            label="Completed Unbilled Value",
-            value=unbilled_comp_val,
-            unit="INR",
-            display=format_inr(unbilled_comp_val),
-            caveat_codes=["DQ010"],
-            role="primary" if status_filter == "completed_unbilled" else "caveat",
-        ),
-    ]
+    is_ongoing_query = bool(effective_status and effective_status.strip().lower() in ["ongoing", "active", "in-progress", "in progress"])
+
+    if is_ongoing_query:
+        ongoing_rows = [r for r in status_rows if "ongoing" in (r["execution_status"] or "").lower()]
+        ongoing_cnt = sum(r["count"] for r in ongoing_rows)
+        ongoing_val = sum(r["contracted_val"] for r in ongoing_rows)
+        facts = [
+            Fact(
+                id="F1",
+                metric="ongoing_orders",
+                label="Ongoing Work Orders",
+                value=ongoing_cnt,
+                unit="count",
+                display=f"{ongoing_cnt} orders",
+                n=ongoing_cnt,
+                must_mention=True,
+                role="primary",
+            ),
+            Fact(
+                id="F2",
+                metric="ongoing_contracted_value",
+                label="Ongoing Contracted Value",
+                value=ongoing_val,
+                unit="INR",
+                display=format_inr(ongoing_val),
+                role="support",
+            ),
+            Fact(
+                id="F3",
+                metric="total_work_orders",
+                label="Total Work Orders Portfolio",
+                value=total_orders,
+                unit="count",
+                display=f"{total_orders} total",
+                role="support",
+            ),
+        ]
+        template = (
+            f"There are currently [[F1]] active or ongoing across operational projects, representing "
+            f"[[F2]] in contracted value across the total portfolio of [[F3]]."
+        )
+    else:
+        facts = [
+            Fact(
+                id="F1",
+                metric="total_work_orders",
+                label="Total Work Orders",
+                value=total_orders,
+                unit="count",
+                display=f"{total_orders} work orders",
+                n=total_orders,
+                must_mention=True,
+                role="primary" if effective_status != "completed_unbilled" else "support",
+            ),
+            Fact(
+                id="F2",
+                metric="completed_work_orders_count",
+                label="Completed Work Orders",
+                value=completed_cnt,
+                unit="count",
+                display=f"{completed_cnt} completed",
+                n=completed_cnt,
+                role="support",
+            ),
+            Fact(
+                id="F3",
+                metric="completion_rate_pct",
+                label="Operations Completion Rate",
+                value=round(completion_rate, 1),
+                unit="pct",
+                display=format_pct(completion_rate),
+                role="support",
+            ),
+            Fact(
+                id="F4",
+                metric="delayed_work_orders_count",
+                label="Delayed Delivery Work Orders (DQ011)",
+                value=delayed_count,
+                unit="count",
+                display=f"{delayed_count} delayed",
+                caveat_codes=["DQ011"],
+                must_mention=True if delayed_count > 0 else False,
+                role="caveat",
+            ),
+            Fact(
+                id="F5",
+                metric="completed_unbilled_count",
+                label="Completed But Unbilled Orders (DQ010)",
+                value=unbilled_comp_count,
+                unit="count",
+                display=f"{unbilled_comp_count} orders",
+                caveat_codes=["DQ010"],
+                role="caveat" if effective_status != "completed_unbilled" else "support",
+            ),
+            Fact(
+                id="F6",
+                metric="completed_unbilled_value",
+                label="Completed Unbilled Value",
+                value=unbilled_comp_val,
+                unit="INR",
+                display=format_inr(unbilled_comp_val),
+                caveat_codes=["DQ010"],
+                role="primary" if effective_status == "completed_unbilled" else "caveat",
+            ),
+        ]
+        template = (
+            f"Operations tracker records [[F1]] total orders with a [[F3]] completion rate ([[F2]]). "
+            f"There are [[F4]] delayed projects overdue delivery, and [[F5]] completed projects "
+            f"remaining unbilled ([[F6]] at risk)."
+        )
 
     # Execution Table
     tbl_headers = ["Execution Status", "Count", "Contracted Value", "Billed Value", "Unbilled Backlog"]

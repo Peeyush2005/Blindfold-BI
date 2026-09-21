@@ -5,7 +5,7 @@ and logs DQ008-DQ016 in the DQ Ledger.
 """
 
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional, List, Union
 import pandas as pd
 import numpy as np
 
@@ -17,28 +17,39 @@ from app.data.normalize.common import (
 )
 
 
-def normalize_work_orders(file_path: Path, as_of_date: pd.Timestamp = DEFAULT_AS_OF_DATE) -> pd.DataFrame:
+def normalize_work_orders(source: Union[Path, str, pd.DataFrame], as_of_date: pd.Timestamp = DEFAULT_AS_OF_DATE) -> pd.DataFrame:
     """
-    Transforms raw Work_Order_Tracker Data sheet into standardized analytical DataFrame.
+    Transforms raw Work_Order_Tracker Data sheet or raw DataFrame into standardized analytical DataFrame.
     Validates against Ground Truth Spot Checks:
     - Net rows: 176
     - Contract value excl GST: ₹21.16 Cr
     - Total receivable: ₹3.63 Cr (11 negative rows)
     - 4 fully empty columns dropped
     """
-    if not file_path.exists():
-        raise FileNotFoundError(f"Work Orders file not found: {file_path}")
+    if isinstance(source, pd.DataFrame):
+        df = source.copy()
+        if any("unnamed" in str(c).lower() for c in df.columns):
+            for idx, row in df.head(5).iterrows():
+                row_str = " ".join([str(x).lower() for x in row.dropna()])
+                if "deal name" in row_str or "contract value" in row_str or "work order" in row_str:
+                    df.columns = [str(x).strip() for x in row]
+                    df = df.iloc[idx + 1:].reset_index(drop=True)
+                    break
+    else:
+        file_path = Path(source)
+        if not file_path.exists():
+            raise FileNotFoundError(f"Work Orders file not found: {file_path}")
 
-    # Detect header row (row index 1 in 0-indexed pandas, 2nd row of Excel)
-    df_preview = pd.read_excel(file_path, header=None, nrows=5)
-    header_idx = 1
-    for idx, row in df_preview.iterrows():
-        row_str = " ".join([str(x).lower() for x in row.dropna()])
-        if "deal name" in row_str or "contract value" in row_str or "work order" in row_str:
-            header_idx = idx
-            break
+        # Detect header row (row index 1 in 0-indexed pandas, 2nd row of Excel)
+        df_preview = pd.read_excel(file_path, header=None, nrows=5)
+        header_idx = 1
+        for idx, row in df_preview.iterrows():
+            row_str = " ".join([str(x).lower() for x in row.dropna()])
+            if "deal name" in row_str or "contract value" in row_str or "work order" in row_str:
+                header_idx = idx
+                break
 
-    df = pd.read_excel(file_path, header=header_idx)
+        df = pd.read_excel(file_path, header=header_idx)
     raw_count = len(df)
 
     # Strip column names
