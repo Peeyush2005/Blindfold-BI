@@ -148,11 +148,11 @@ def test_graceful_empty_schema_when_fixtures_absent(monkeypatch, tmp_path):
     records, duration_ms, count = store.query("SELECT COUNT(*) AS c FROM sector_reconciliation")
     assert records[0]["c"] == 9  # 9 canonical sectors
 
-    # Ensure DataAdapter loads empty typed dataframes
+    # Ensure DataAdapter raises DataUnavailableError when fixtures are absent and Monday is not configured
+    from app.data.adapter import DataUnavailableError
     local_adapter = DataAdapter()
-    d_df, w_df = local_adapter.load_data(force_refresh=True)
-    assert len(d_df) == 0
-    assert len(w_df) == 0
+    with pytest.raises(DataUnavailableError):
+        local_adapter.load_data(force_refresh=True)
 
     # Restore global singletons for subsequent test suites
     monkeypatch.undo()

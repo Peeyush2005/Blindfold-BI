@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 from typing import Optional
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
@@ -28,7 +29,9 @@ class Settings(BaseSettings):
     # LLM Settings (NVIDIA NIM Free Tier)
     NVIDIA_API_KEY: str = os.getenv("NVIDIA_API_KEY", "")
     NVIDIA_BASE_URL: str = os.getenv("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1")
-    NVIDIA_MODEL: str = os.getenv("NVIDIA_MODEL", "openai/gpt-oss-20b")
+    NVIDIA_MODEL: str = os.getenv("NVIDIA_MODEL", "openai/gpt-oss-120b")
+    # Optional comma-separated fallback chain, tried in order after NVIDIA_MODEL. IDs must exist in your NVIDIA catalog.
+    NVIDIA_FALLBACK_MODELS: str = os.getenv("NVIDIA_FALLBACK_MODELS", "openai/gpt-oss-20b")
 
     # Monday.com API Settings (Optional live connector)
     MONDAY_API_TOKEN: str = os.getenv("MONDAY_API_TOKEN", "")
@@ -38,6 +41,8 @@ class Settings(BaseSettings):
     MONDAY_SIGNING_SECRET: str = os.getenv("MONDAY_SIGNING_SECRET", "")
     MONDAY_DATA_SOURCE_PRIORITY: str = os.getenv("MONDAY_DATA_SOURCE_PRIORITY", "monday_first")
     CACHE_TTL_SECONDS: int = 600  # 10 minutes
+    # Local Excel fixtures are for tests/dev only. None = allowed unless ENVIRONMENT == "production".
+    ALLOW_FIXTURE_FALLBACK: Optional[bool] = None
 
     # Security & API Key
     API_KEY: str = os.getenv("API_KEY", "skylark-secret-v1-key")
@@ -59,5 +64,22 @@ class Settings(BaseSettings):
         "https://mango-plant-08ea0340f.1.azurestaticapps.net",
     ]
     CORS_ORIGIN_REGEX: Optional[str] = r"^https:\/\/.*\.azurestaticapps\.net$"
+
+    @property
+    def fixtures_allowed(self) -> bool:
+        if self.ALLOW_FIXTURE_FALLBACK is not None:
+            return bool(self.ALLOW_FIXTURE_FALLBACK)
+        return self.ENVIRONMENT.strip().lower() != "production"
+
+    @model_validator(mode="after")
+    def _no_dev_secrets_in_production(self):
+        """The repo is public, so the development defaults must never be accepted in production."""
+        if self.ENVIRONMENT.strip().lower() == "production":
+            if self.API_KEY == "skylark-secret-v1-key":
+                self.API_KEY = ""
+            if self.ADMIN_TOKEN == "dev-admin-token-super-secret-12345":
+                self.ADMIN_TOKEN = ""
+        return self
+
 
 settings = Settings()

@@ -15,6 +15,7 @@ from app.models.v1 import (
 )
 from app.data.adapter import adapter
 from app.data.dq_ledger import dq_ledger
+from app.data.normalize.deals import PROB_WEIGHTS, DEFAULT_PROB_WEIGHT
 
 router = APIRouter(prefix="/meta", tags=["Metadata & Transparency v1"])
 
@@ -71,43 +72,37 @@ DQ_EXPLANATIONS: Dict[str, Dict[str, str]] = {
     "/source",
     response_model=MetaSourceResponse,
     summary="Get Connected Data Source Status",
-    description="Returns real-time connection status, true data source (monday.com vs snapshot vs stale_snapshot), sync timestamp, as-of date, and row counts. Exposes zero secrets.",
+    description="Reports the real data source (monday.com, stale_snapshot, or unavailable), the actual sync time, snapshot age, and row counts from the last fetch. Exposes zero secrets.",
 )
 async def get_source_metadata():
-    status = adapter.get_status()
-    now_dt = adapter.last_synced or datetime.now()
-    synced_at_str = now_dt.strftime("%H:%M")
-
-    deals_cnt = status.get("deals_count") or 332
-    wo_cnt = status.get("work_orders_count") or 176
+    status = await adapter.ensure_fresh()
     as_of = settings.AS_OF_DATE
+    stats = status.get("stats") or {}
+    boards = stats.get("boards") or {}
+    board_names = [b.get("board_name") for b in boards.values() if b.get("board_name")]
+    synced_at = adapter.last_synced.strftime("%H:%M") if adapter.last_synced else "never"
 
-    monday_configured = bool(settings.MONDAY_API_TOKEN and settings.MONDAY_API_TOKEN.strip())
-    is_stale = getattr(adapter, "is_stale", False)
-
-    if monday_configured:
-        if is_stale:
-            source_name = "stale_snapshot"
-            badge = f"Stale snapshot · synced {synced_at_str} · as of {as_of}"
-        else:
-            source_name = "monday.com"
-            badge = f"monday.com · synced {synced_at_str} · as of {as_of}"
+    if not status.get("has_data"):
+        source_name, badge = "unavailable", "monday.com not connected"
+    elif status.get("is_stale"):
+        source_name, badge = "stale_snapshot", f"Stale snapshot · last synced {synced_at} · as of {as_of}"
+    elif status.get("source") == "monday.com":
+        source_name, badge = "monday.com", f"monday.com · synced {synced_at} · as of {as_of}"
     else:
-        source_name = "snapshot"
-        badge = f"Snapshot · synced {synced_at_str} · as of {as_of}"
+        source_name, badge = status.get("source") or "snapshot", f"Local fixture (not live) · loaded {synced_at} · as of {as_of}"
 
     return MetaSourceResponse(
-        connected=True,
+        connected=bool(status.get("connected")),
         source=source_name,
-        synced_at=synced_at_str,
+        synced_at=synced_at,
         as_of_date=as_of,
-        deals_count=deals_cnt,
-        work_orders_count=wo_cnt,
+        deals_count=int(status.get("deals_count") or 0),
+        work_orders_count=int(status.get("work_orders_count") or 0),
         display_badge=badge,
-        board_names=["Deal funnel", "Work_Order_Tracker"],
-        is_stale=is_stale,
-        snapshot_age_seconds=120,
-        refresh_policy="Auto-sync every 10 minutes (single-flight background refresh)",
+        board_names=board_names,
+        is_stale=bool(status.get("is_stale")),
+        snapshot_age_seconds=status.get("snapshot_age_seconds"),
+        refresh_policy=f"Re-reads monday.com when the snapshot is older than {settings.CACHE_TTL_SECONDS // 60} minutes",
     )
 
 
@@ -115,10 +110,12 @@ async def get_source_metadata():
     "/quality",
     response_model=MetaQualityResponse,
     summary="Get Data Quality Ledger Summary",
-    description="Provides audit totals, exclusion counts, missing-value percentages, and granular DQ anomaly breakdowns with conversational prompt suggestions.",
+    description="Audit totals computed from the last real fetch: rows loaded vs used, duplicates and header rows removed, missing-value share, empty columns, and the DQ anomaly breakdown.",
 )
 async def get_quality_metadata():
+    status = await adapter.ensure_fresh()
     anomalies = dq_ledger.get_all()
+    rows = (status.get("stats") or {}).get("rows", {})
     dq_summaries: List[DQCodeSummary] = []
     total_count = 0
 
@@ -136,24 +133,36 @@ async def get_quality_metadata():
         )
         total_count += a.affected_count
 
-    # Extract missing deal value count
-    dq003 = next((a for a in anomalies if a.code == "DQ003"), None)
-    null_deals_cnt = dq003.affected_count if dq003 else 29
-    total_deals = 332
-    null_deals_pct = (null_deals_cnt / total_deals) * 100
+    def affected(code: str) -> int:
+        item = next((a for a in anomalies if a.code == code), None)
+        return int(item.affected_count) if item else 0
+
+    deals_clean = int(rows.get("deals_clean") or 0)
+    missing_values = affected("DQ003")
+    share = (missing_values / deals_clean * 100) if deals_clean else 0.0
+    dq008 = next((a for a in anomalies if a.code == "DQ008"), None)
 
     return MetaQualityResponse(
-        rows_loaded={"deals": 332, "work_orders": 176},
-        rows_used={"deals": 332, "work_orders": 176},
-        duplicates_removed=0,
-        header_rows_removed=0,
-        share_of_deals_with_no_value=f"{null_deals_pct:.1f}% ({null_deals_cnt} deals)",
-        empty_columns=[
-            "deal_funnel.expected_close_date_raw",
-            "work_orders.legacy_tracking_num",
-        ],
+        rows_loaded={"deals": int(rows.get("deals_raw") or 0), "work_orders": int(rows.get("work_orders_raw") or 0)},
+        rows_used={"deals": deals_clean, "work_orders": int(rows.get("work_orders_clean") or 0)},
+        duplicates_removed=affected("DQ002"),
+        header_rows_removed=affected("DQ001"),
+        share_of_deals_with_no_value=f"{share:.1f}% ({missing_values} deals)",
+        empty_columns=list(dq008.sample_identifiers) if dq008 else [],
         dq_codes=dq_summaries,
         total_anomalies=total_count,
+    )
+
+
+def _energy_description() -> str:
+    df = adapter.deals_df
+    if df is None:
+        return "Energy = Renewables + Powerline. Data not loaded yet."
+    counts = df["sector"].value_counts()
+    ren, pwr = int(counts.get("Renewables", 0)), int(counts.get("Powerline", 0))
+    return (
+        f"Energy is Renewables ({ren} deals) plus Powerline ({pwr} deals) in the connected Deals board. "
+        "There is no sector literally named Energy, Power, or Utilities in the data."
     )
 
 
@@ -221,7 +230,7 @@ async def get_contract_metadata():
         energy_sector_group={
             "name": "Energy Cluster",
             "sectors": ["Renewables", "Powerline"],
-            "description": "Consolidated energy sector grouping representing solar/wind renewables (109 deals) and powerline transmission grid assets (26 deals). Note: Power and Utilities labels do not exist in source CRM data.",
+            "description": _energy_description(),
         },
         fiscal_year_policy={
             "start_month": 4,
@@ -230,14 +239,7 @@ async def get_contract_metadata():
             "quarter_range": "1 Jan 2026 – 31 Mar 2026",
             "as_of_date": settings.AS_OF_DATE,
         },
-        probability_weights={
-            "Lead": 0.10,
-            "Qualified": 0.25,
-            "Proposal": 0.50,
-            "Negotiation": 0.75,
-            "Won": 1.00,
-            "Lost": 0.00,
-        },
+        probability_weights={**PROB_WEIGHTS, "Not recorded": DEFAULT_PROB_WEIGHT},
         cross_board_join_policy="No verified foreign key exists between Deals and Work Orders (DQ015). Cross-board relational joins are strictly refused to guarantee zero Cartesian hallucination.",
         metric_definitions=metric_defs,
     )

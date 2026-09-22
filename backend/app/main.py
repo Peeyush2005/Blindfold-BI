@@ -30,13 +30,17 @@ logger = logging.getLogger("blindfold.api")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: Initialize DataAdapter snapshot and DuckDB analytic tables
-    logger.info("Initializing DataAdapter snapshot...")
-    adapter.load_data()
-    logger.info("Initializing DuckDB analytic tables...")
-    db.init_db()
-    logger.info("Initializing Blindfold Privacy Gateway surrogate catalogs...")
-    orchestrator.init_catalog()
+    # Startup: Initialize DuckDB and Blindfold Privacy Gateway catalogs
+    logger.info("Loading data from monday.com...")
+    status = await adapter.refresh(force=True)
+    if status.get("has_data"):
+        logger.info(
+            "Data ready from %s: %s deals, %s work orders",
+            status["source"], status["deals_count"], status["work_orders_count"],
+        )
+    else:
+        # The service still starts so /readyz and the UI can show exactly what is wrong.
+        logger.error("No data available at startup: %s", status.get("error"))
     yield
     # Graceful shutdown
     logger.info("Shutting down Blindfold BI service...")
@@ -152,12 +156,14 @@ async def readyz():
     duckdb_ok = db.store.con is not None and db.store.initialized
     contracts_ok = bool(orchestrator.contract_manager.metrics)
 
-    data_source = "monday" if monday_ok else "snapshot"
+    data_status = adapter.get_status()
+    data_source = data_status["source"]
     llm_status = "configured" if llm_ok else "missing"
 
     checks = {
         "duckdb": duckdb_ok,
-        "data_snapshot": (adapter.deals_df is not None and adapter.wo_df is not None),
+        "data_snapshot": adapter.has_data,
+        "monday_live": bool(data_status.get("connected")),
         "metric_contracts": contracts_ok,
         "llm_configuration": llm_ok or (settings.LLM_MODE == "off"),
         "key_store": key_store_status == "ok",
@@ -166,7 +172,9 @@ async def readyz():
     is_prod = settings.ENVIRONMENT.lower() == "production"
     prod_missing_required = is_prod and (not llm_ok or not monday_ok or key_store_status != "ok")
 
-    is_ready = all(checks.values()) and not prod_missing_required
+    required_checks = {k: v for k, v in checks.items() if k != "monday_live"}
+    monday_live_ok = (not is_prod) or checks["monday_live"]  # live monday.com data is mandatory only in production
+    is_ready = all(required_checks.values()) and monday_live_ok and not prod_missing_required
     status_code = status.HTTP_200_OK if is_ready else status.HTTP_503_SERVICE_UNAVAILABLE
 
     content = {
@@ -176,6 +184,7 @@ async def readyz():
         "llm_configured": llm_ok,
         "monday_configured": monday_ok,
         "key_store": key_store_status,
+        "monday_error": data_status.get("error"),
         "checks": checks,
         "as_of_date": settings.AS_OF_DATE,
         "source": data_source,

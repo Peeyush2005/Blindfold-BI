@@ -99,7 +99,7 @@ class PipelineOrchestrator:
                 run_id=run_id,
                 question=clean_query,
                 as_of=settings.AS_OF_DATE,
-                source="monday.com",
+                source=adapter.get_status().get("source") or "unavailable",
             ).model_dump()
             await emit("run.started", run_started_payload)
 
@@ -291,10 +291,11 @@ class PipelineOrchestrator:
             plan_start = time.time()
             llm_plan_success = False
             plan_result = None
+            plan_usage: Dict[str, Any] = {}
 
             if settings.LLM_MODE != "off" and llm_client.client:
                 try:
-                    plan_result = await llm_client.plan_query(anonymized_query)
+                    plan_result = await llm_client.plan_query(anonymized_query, usage=plan_usage)
                     if plan_result and plan_result.get("tool") in registry._tools:
                         tool_name = plan_result["tool"]
                         tool_params = {}
@@ -405,10 +406,10 @@ class PipelineOrchestrator:
             # Emit LLM Event for Planning
             await emit("llm", LlmEventPayload(
                 call="plan",
-                model=settings.NVIDIA_MODEL if llm_plan_success else "deterministic_rules",
-                tokens_in=len(anonymized_query.split()) + 150 if llm_plan_success else 0,
-                tokens_out=30 if llm_plan_success else 0,
-                queue_ms=0.0,
+                model=(plan_usage.get("model") or settings.NVIDIA_MODEL) if llm_plan_success else "deterministic_rules",
+                tokens_in=plan_usage.get("tokens_in", 0) if llm_plan_success else 0,
+                tokens_out=plan_usage.get("tokens_out", 0) if llm_plan_success else 0,
+                queue_ms=plan_usage.get("queue_ms", 0.0) if llm_plan_success else 0.0,
                 duration_ms=plan_dur_ms,
                 degraded=not llm_plan_success,
             ).model_dump())
@@ -425,7 +426,7 @@ class PipelineOrchestrator:
             await emit("stage", s2_payload)
 
             # =================================================================
-            # Stage 3: FETCH
+            # Stage 3: FETCH (real: re-reads monday.com when the snapshot is older than the TTL)
             # =================================================================
             t_s3 = time.time()
             await emit("stage", StageEventPayload(
@@ -436,20 +437,37 @@ class PipelineOrchestrator:
                 meta={},
             ).model_dump())
 
-            # Snapshot evaluation
-            data_status = adapter.get_status()
+            calls_before = getattr(adapter.client, "calls_today", 0) or 0
+            was_fresh = adapter._is_fresh()
+            data_status = await adapter.ensure_fresh()
+            calls_made = (getattr(adapter.client, "calls_today", 0) or 0) - calls_before
             s3_dur = round((time.time() - t_s3) * 1000, 2)
+            fetch_stats = data_status.get("stats") or {}
+            fetch_rows = fetch_stats.get("rows", {})
+            dq_counts = [d for d in fetch_stats.get("dq", []) if d.get("affected_count")]
+            if was_fresh and calls_made == 0:
+                cache_state = "hit"
+            elif data_status.get("is_stale"):
+                cache_state = "stale"
+            else:
+                cache_state = "miss"
             s3_meta = {
-                "source": "monday.com",
-                "cache": "hit",
+                "source": data_status.get("source"),
+                "cache": cache_state,
+                "monday_api_calls_this_request": calls_made,
+                "snapshot_age_seconds": data_status.get("snapshot_age_seconds"),
                 "as_of": settings.AS_OF_DATE,
-                "deals_count": data_status.get("deals_count", 332),
-                "work_orders_count": data_status.get("wo_count", 176),
+                "deals_count": data_status.get("deals_count"),
+                "work_orders_count": data_status.get("work_orders_count"),
+                "boards": fetch_stats.get("boards"),
+                "error": data_status.get("error"),
                 "latency_ms": s3_dur,
             }
             s3_payload = StageEventPayload(
                 name="fetch",
-                status="done",
+                status="done" if data_status.get("has_data") and not data_status.get("is_stale") else (
+                    "warn" if data_status.get("has_data") else "error"
+                ),
                 started_at=t_s3,
                 duration_ms=s3_dur,
                 meta=s3_meta,
@@ -457,8 +475,21 @@ class PipelineOrchestrator:
             all_stages.append(s3_payload)
             await emit("stage", s3_payload)
 
+            if not data_status.get("has_data"):
+                await self._handle_data_unavailable(
+                    run_id=run_id,
+                    clean_query=clean_query,
+                    error=data_status.get("error"),
+                    emit=emit,
+                    all_stages=all_stages,
+                    all_events=all_events,
+                    run_start=run_start,
+                )
+                await queue.put(None)
+                return run_id
+
             # =================================================================
-            # Stage 4: NORMALIZE
+            # Stage 4: NORMALIZE (reports what the real normalization did to the real rows)
             # =================================================================
             t_s4 = time.time()
             await emit("stage", StageEventPayload(
@@ -469,14 +500,16 @@ class PipelineOrchestrator:
                 meta={},
             ).model_dump())
 
-            # Data hygiene accounting
             s4_dur = round((time.time() - t_s4) * 1000, 2)
             s4_meta = {
-                "deals_clean": 332,
-                "deals_excluded": 14,  # 2 stray headers (DQ001) + 12 duplicates (DQ002)
-                "work_orders_clean": 176,
-                "work_orders_excluded": 1,  # row 0 blank
-                "anomalies_audited": 16,
+                "deals_raw": fetch_rows.get("deals_raw"),
+                "deals_clean": fetch_rows.get("deals_clean"),
+                "deals_excluded": fetch_rows.get("deals_removed"),
+                "work_orders_raw": fetch_rows.get("work_orders_raw"),
+                "work_orders_clean": fetch_rows.get("work_orders_clean"),
+                "work_orders_excluded": fetch_rows.get("work_orders_removed"),
+                "anomalies_audited": len(dq_counts),
+                "dq": dq_counts[:8],
                 "tokenized_query": anonymized_query,
             }
             s4_payload = StageEventPayload(
@@ -513,7 +546,8 @@ class PipelineOrchestrator:
 
             tool_dur_ms = round((time.time() - t_tool) * 1000, 2)
             audit_info = tool_result.audit
-            rows_in = audit_info.get("rows_scanned", 332 if ("deal" in tool_name or "pipe" in tool_name) else 176)
+            default_rows = data_status.get("deals_count") if ("deal" in tool_name or "pipe" in tool_name) else data_status.get("work_orders_count")
+            rows_in = audit_info.get("rows_scanned", default_rows)
             rows_out = len(tool_result.tables[0].rows) if tool_result.tables else len(tool_result.facts)
 
             # Emit Tool Event
@@ -522,8 +556,8 @@ class PipelineOrchestrator:
                 args=tool_params,
                 rows_in=rows_in,
                 rows_out=rows_out,
-                excluded=[{"code": "DQ001_DQ002", "count": 14}],
-                cache="hit",
+                excluded=[{"code": d["code"], "count": d["affected_count"]} for d in dq_counts[:6]],
+                cache=cache_state,
                 duration_ms=tool_dur_ms,
             ).model_dump())
 
@@ -562,6 +596,7 @@ class PipelineOrchestrator:
             t_narrate = time.time()
             llm_narrate_success = False
             draft_narrative = ""
+            narr_usage: Dict[str, Any] = {}
 
             if settings.LLM_MODE != "off" and llm_client.client:
                 try:
@@ -569,6 +604,7 @@ class PipelineOrchestrator:
                         anonymized_query=anonymized_query,
                         tool_name=tool_name,
                         tool_data=tokenized_tool_data,
+                        usage=narr_usage,
                     )
                     llm_narrate_success = bool(draft_narrative and len(draft_narrative) > 20)
                 except Exception as e:
@@ -621,6 +657,7 @@ class PipelineOrchestrator:
                     draft_prose=draft_narrative,
                     offending_spans=audit_res.offending_spans,
                     tool_data=tokenized_tool_data,
+                    usage=narr_usage,
                 )
                 rep_dur = round((time.time() - t_rep) * 1000, 2)
                 if repaired_draft:
@@ -658,10 +695,10 @@ class PipelineOrchestrator:
             # Emit LLM Event with complete telemetry
             await emit("llm", LlmEventPayload(
                 call="narrate",
-                model=settings.NVIDIA_MODEL if (llm_narrate_success and narration_source != "template") else (settings.NVIDIA_MODEL if llm_narrate_success else "local_synthesizer"),
-                tokens_in=len(str(tokenized_tool_data).split()) + 300 if llm_narrate_success else 0,
-                tokens_out=len(ver_result.final_text.split()) if llm_narrate_success else 0,
-                queue_ms=0.0,
+                model=(narr_usage.get("model") or settings.NVIDIA_MODEL) if llm_narrate_success else "local_synthesizer",
+                tokens_in=narr_usage.get("tokens_in", 0) if llm_narrate_success else 0,
+                tokens_out=narr_usage.get("tokens_out", 0) if llm_narrate_success else 0,
+                queue_ms=narr_usage.get("queue_ms", 0.0) if llm_narrate_success else 0.0,
                 duration_ms=narrate_dur_ms,
                 degraded=degraded,
                 llm_called=llm_narrate_success,
@@ -713,14 +750,14 @@ class PipelineOrchestrator:
                 query_executed=audit_info.get("query", f"SELECT * FROM {tool_name}"),
                 parameters=tool_params,
                 rows_scanned=rows_in,
-                rows_excluded=audit_info.get("rows_excluded", 14),
+                rows_excluded=audit_info.get("rows_excluded", (fetch_rows.get("deals_removed") or 0) + (fetch_rows.get("work_orders_removed") or 0)),
                 exclusion_reasons=audit_info.get("exclusion_reasons", ["Dataset schema filters applied"]),
                 execution_duration_ms=total_duration_ms,
                 confidence_score=ver_result.confidence_score,
                 facts_grounded=ver_result.facts_grounded_count,
                 data_as_of=settings.AS_OF_DATE,
                 verified=ver_result.verified,
-                model=settings.NVIDIA_MODEL if (llm_narrate_success and narration_source != "template") else (settings.NVIDIA_MODEL if llm_narrate_success else None),
+                model=(narr_usage.get("model") or settings.NVIDIA_MODEL) if (llm_narrate_success and narration_source != "template") else None,
                 llm_called=llm_narrate_success,
                 narration_source=narration_source,
                 template_reason=template_reason,
@@ -975,6 +1012,58 @@ class PipelineOrchestrator:
                 ).model_dump())
 
         return blocks
+
+    async def _handle_data_unavailable(
+        self,
+        run_id: str,
+        clean_query: str,
+        error: Optional[str],
+        emit: Any,
+        all_stages: List[Dict[str, Any]],
+        all_events: List[Dict[str, Any]],
+        run_start: float,
+    ):
+        """No live data: say so plainly instead of answering from anything else."""
+        prose = (
+            "I can't read your monday.com boards right now, so I'm not going to guess at an answer.\n\n"
+            f"What monday.com returned: {error or 'no connection details are configured'}.\n\n"
+            "Check that the API token and both board IDs are set on the server and that the boards' column titles match "
+            "the imported sheets, then ask again."
+        )
+        blocks = [
+            TextBlock(content=prose).model_dump(),
+            NoteBlock(note_type="caveat", text="No data was analysed for this question.").model_dump(),
+        ]
+        total_dur = round((time.time() - run_start) * 1000, 2)
+        receipt = TrustReceiptV1(
+            query_executed="No query executed: data source unavailable",
+            parameters={},
+            rows_scanned=0,
+            rows_excluded=0,
+            exclusion_reasons=["monday.com unavailable"],
+            execution_duration_ms=total_dur,
+            confidence_score=0.0,
+            facts_grounded=0,
+            data_as_of=settings.AS_OF_DATE,
+            verified=True,
+        )
+        answer_payload = AnswerPayload(blocks=blocks, receipt=receipt, chips=[], clarification=False)
+        await emit("answer", answer_payload.model_dump())
+        await emit("run.finished", RunFinishedPayload(total_ms=total_dur, degraded=True).model_dump())
+        run_store.save_run(RunRecord(
+            run_id=run_id,
+            question=clean_query,
+            as_of=settings.AS_OF_DATE,
+            source="unavailable",
+            status="completed",
+            total_ms=total_dur,
+            degraded=True,
+            stages=all_stages,
+            events=all_events,
+            answer=answer_payload.model_dump(),
+            error=error,
+            created_at=run_start,
+        ))
 
     async def _handle_special_response(
         self,

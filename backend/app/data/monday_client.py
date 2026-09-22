@@ -17,7 +17,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 logger = logging.getLogger(__name__)
 
 MONDAY_API_URL = "https://api.monday.com/v2"
-API_VERSION = "2024-01"
+API_VERSION = os.getenv("MONDAY_API_VERSION", "").strip()  # empty = let monday use its current version
 DEFAULT_DAILY_BUDGET = 800
 SNAPSHOT_TTL_SECONDS = 600
 
@@ -32,6 +32,11 @@ class WriteForbiddenError(ValueError):
 
 # Dynamically register alias for backward compatibility
 setattr(sys.modules[__name__], "".join(["Mut", "ation", "ForbiddenError"]), WriteForbiddenError)
+
+
+class MondayAPIError(RuntimeError):
+    """Raised when monday.com rejects a request (bad token, no access, unknown board, GraphQL error)."""
+    pass
 
 
 class CallBudgetExceededError(RuntimeError):
@@ -68,11 +73,13 @@ class MondayClient:
         return bool(self.api_token and self.api_token.strip())
 
     def _get_headers(self) -> Dict[str, str]:
-        return {
+        headers = {
             "Authorization": self.api_token,
             "Content-Type": "application/json",
-            "API-Version": API_VERSION,
         }
+        if API_VERSION:
+            headers["API-Version"] = API_VERSION
+        return headers
 
     def _check_budget(self) -> None:
         """Reset or verify call budget."""
@@ -214,6 +221,77 @@ class MondayClient:
                 break
 
         return all_items
+
+    async def fetch_board(self, board_id: str, page_size: int = 500) -> Dict[str, Any]:
+        """
+        Read one board completely: name, column definitions, and every item.
+        Read-only. Raises MondayAPIError with monday's own message on any failure
+        (invalid token, no access, unknown board) instead of returning partial data.
+        """
+        t0 = time.time()
+        calls = 0
+
+        head = await self.query(
+            """
+            query ($ids: [ID!]) {
+                boards(ids: $ids) {
+                    id
+                    name
+                    columns { id title type }
+                    items_page(limit: %d) {
+                        cursor
+                        items { id name column_values { id type text value } }
+                    }
+                }
+            }
+            """ % page_size,
+            {"ids": [str(board_id)]},
+        )
+        calls += 1
+        if "error" in head:
+            raise MondayAPIError(str(head["error"]))
+        boards = head.get("boards") or []
+        if not boards:
+            raise MondayAPIError(
+                f"Board {board_id} was not found or this token has no access to it."
+            )
+
+        board = boards[0]
+        page = board.get("items_page") or {}
+        items: List[Dict[str, Any]] = list(page.get("items") or [])
+        cursor = page.get("cursor")
+        pages = 1
+
+        while cursor:
+            nxt = await self.query(
+                """
+                query ($cursor: String!, $limit: Int) {
+                    next_items_page(limit: $limit, cursor: $cursor) {
+                        cursor
+                        items { id name column_values { id type text value } }
+                    }
+                }
+                """,
+                {"cursor": cursor, "limit": page_size},
+            )
+            calls += 1
+            if "error" in nxt:
+                raise MondayAPIError(str(nxt["error"]))
+            chunk = nxt.get("next_items_page") or {}
+            batch = chunk.get("items") or []
+            items.extend(batch)
+            pages += 1
+            cursor = chunk.get("cursor") if batch else None
+
+        return {
+            "id": board.get("id"),
+            "name": board.get("name"),
+            "columns": board.get("columns") or [],
+            "items": items,
+            "pages": pages,
+            "api_calls": calls,
+            "duration_ms": round((time.time() - t0) * 1000, 1),
+        }
 
     async def fetch_board_items(self, board_id: str) -> List[Dict[str, Any]]:
         """Backward-compatible alias for fetch_all_items()."""

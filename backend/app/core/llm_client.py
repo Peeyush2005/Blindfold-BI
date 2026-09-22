@@ -1,13 +1,15 @@
 """
-NVIDIA NIM LLM Client for Blindfold BI.
-Features:
-- Token-bucket rate limiter to honor API quotas
-- Multi-model fallback chain (Llama-3.3-70b -> Mixtral-8x7b -> Nemotron-70b -> Local Deterministic)
-- Numbers-by-reference prompt templating
-- Zero-leakage surrogate token preservation
+NVIDIA NIM LLM client for Blindfold BI.
+
+- Talks to NVIDIA's OpenAI-compatible endpoint with a model chain taken from settings
+  (NVIDIA_MODEL, then NVIDIA_FALLBACK_MODELS). No model IDs are invented here.
+- Token-bucket rate limiting to stay inside the free-tier quota.
+- Reasoning models: `reasoning_content` is never used as an answer. If the visible content is empty
+  (the token budget was spent thinking), the same model is retried once with a larger budget.
+- Real usage (model, tokens, queue wait) is reported back to the caller for the run events.
+- The plain-text fallback is honest: it summarises the computed figures and says the AI writer is unavailable.
 """
 
-import os
 import re
 import time
 import json
@@ -28,7 +30,6 @@ class TokenBucket:
     """Async token bucket rate limiter for external LLM calls."""
 
     def __init__(self, rate: float = 10.0, capacity: float = 60.0):
-        # 10.0 tokens/sec, capacity of 60 burst to allow evaluation suites to run seamlessly
         self.rate = rate
         self.capacity = capacity
         self.tokens = capacity
@@ -48,165 +49,176 @@ class TokenBucket:
                     self.tokens -= tokens
                     return True
 
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.25)
         return False
 
 
 class LLMClient:
-    """
-    Manages communication with NVIDIA NIM hosted inference with automated fallback
-    and strict privacy boundaries.
-    """
+    """NVIDIA NIM chat client with model fallback and honest telemetry."""
 
-    FALLBACK_MODELS = [
-        "meta/muse-glimmer-30b",
-    ]
+    PLAN_MAX_TOKENS = 1200
+    NARRATE_MAX_TOKENS = 3000
 
     def __init__(self):
         self.api_key = settings.NVIDIA_API_KEY
         self.base_url = settings.NVIDIA_BASE_URL
         self.primary_model = settings.NVIDIA_MODEL
-        self.limiter = TokenBucket(rate=10.0, capacity=60.0)
+        self.limiter = TokenBucket(rate=0.6, capacity=8.0)  # about 36 requests/minute, small burst
         self.client: Optional[AsyncOpenAI] = None
 
         if self.api_key and self.api_key.startswith("nvapi-"):
-            self.client = AsyncOpenAI(
-                base_url=self.base_url,
-                api_key=self.api_key,
-                timeout=30.0,
-            )
+            self.client = AsyncOpenAI(base_url=self.base_url, api_key=self.api_key, timeout=45.0)
 
         self._planner_prompt = self._load_prompt("planner.md")
         self._narrator_prompt = self._load_prompt("narrator.md")
 
+    # ------------------------------------------------------------------ plumbing
     def _load_prompt(self, filename: str) -> str:
         p = PROMPTS_DIR / filename
-        if p.exists():
-            return p.read_text(encoding="utf-8")
-        return ""
+        return p.read_text(encoding="utf-8") if p.exists() else ""
 
-    async def plan_query(self, anonymized_query: str) -> Optional[Dict[str, Any]]:
-        """
-        Uses LLM with planner prompt to route query to tool and extract parameters.
-        Returns parsed JSON or None if planning failed or falls back.
-        """
-        if settings.LLM_MODE == "off" or not self.client:
+    @property
+    def models(self) -> List[str]:
+        chain = [self.primary_model] + [m.strip() for m in (settings.NVIDIA_FALLBACK_MODELS or "").split(",")]
+        seen: List[str] = []
+        for m in chain:
+            if m and m not in seen:
+                seen.append(m)
+        return seen
+
+    async def _chat(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        max_tokens: int,
+        temperature: float,
+        usage: Optional[Dict[str, Any]],
+        wait_timeout: float = 6.0,
+    ) -> Optional[str]:
+        """Try each model in the chain; return the visible text, or None if nothing usable came back."""
+        if not self.client or settings.LLM_MODE == "off":
             return None
 
-        acquired = await self.limiter.acquire(1.0, timeout=3.0)
-        if not acquired:
-            logger.warning("Token bucket rate limiter engaged; falling back to rule-based planner.")
+        t_wait = time.time()
+        if not await self.limiter.acquire(1.0, timeout=wait_timeout):
+            logger.warning("LLM rate limiter engaged; skipping LLM call.")
+            if usage is not None:
+                usage["error"] = "rate_limited"
             return None
+        queue_ms = round((time.time() - t_wait) * 1000, 1)
 
-        prompt = f"User Question: {anonymized_query}\n\nRespond with valid JSON tool routing."
-        models_to_try = [self.primary_model] + [m for m in self.FALLBACK_MODELS if m != self.primary_model]
-
-        for model_name in models_to_try:
-            try:
-                resp = await self.client.chat.completions.create(
-                    model=model_name,
-                    messages=[
-                        {"role": "system", "content": self._planner_prompt},
-                        {"role": "user", "content": prompt},
-                    ],
-                    temperature=0.0,
-                    max_tokens=800,
-                )
-                msg = resp.choices[0].message
-                raw = (msg.content or "").strip()
-                if not raw and getattr(msg, "reasoning_content", None):
-                    raw = (msg.reasoning_content or "").strip()
-
-                if not raw:
-                    continue
-
-                # Extract JSON using regex
-                json_match = re.search(r"\{.*\}", raw, re.DOTALL)
-                if json_match:
-                    raw_json = json_match.group(0)
-                    data = json.loads(raw_json)
-                    if "tool" in data:
-                        return data
-                elif raw.startswith("```"):
-                    raw_content = raw.split("```")[1]
-                    if raw_content.startswith("json"):
-                        raw_content = raw_content[4:]
-                    data = json.loads(raw_content.strip())
-                    if "tool" in data:
-                        return data
-            except Exception as e:
-                logger.warning(f"Planner call failed on model {model_name}: {e}. Trying fallback.")
-                continue
-
+        messages = [
+            {"role": "system", "content": "Reasoning: low\n\n" + system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+        last_error: Optional[str] = None
+        for model in self.models:
+            budget = max_tokens
+            for attempt in (1, 2):
+                t0 = time.time()
+                try:
+                    resp = await self.client.chat.completions.create(
+                        model=model, messages=messages, temperature=temperature, max_tokens=budget
+                    )
+                except Exception as exc:  # unknown model, 429, network, auth
+                    last_error = f"{model}: {type(exc).__name__}: {exc}"
+                    logger.warning("LLM call failed (%s)", last_error)
+                    break  # next model
+                text = (resp.choices[0].message.content or "").strip()
+                if usage is not None:
+                    u = getattr(resp, "usage", None)
+                    usage["model"] = model
+                    usage["tokens_in"] = getattr(u, "prompt_tokens", 0) or 0
+                    usage["tokens_out"] = getattr(u, "completion_tokens", 0) or 0
+                    usage["queue_ms"] = queue_ms
+                    usage["duration_ms"] = round((time.time() - t0) * 1000, 1)
+                    usage["attempts"] = attempt
+                if text:
+                    return text
+                budget *= 2  # reasoning consumed the whole budget: retry once with more room
+        if usage is not None:
+            usage["error"] = last_error or "empty_response"
         return None
+
+    # ------------------------------------------------------------------ planning
+    async def plan_query(self, anonymized_query: str, usage: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+        """Ask the model which tool answers the question. Returns {"tool", "parameters", ...} or None."""
+        raw = await self._chat(
+            self._planner_prompt,
+            f"User Question: {anonymized_query}\n\nRespond with valid JSON tool routing.",
+            self.PLAN_MAX_TOKENS,
+            0.0,
+            usage,
+            wait_timeout=3.0,
+        )
+        if not raw:
+            return None
+        candidate = raw
+        if "```" in raw:
+            parts = raw.split("```")
+            if len(parts) >= 2:
+                candidate = parts[1]
+                if candidate.lstrip().lower().startswith("json"):
+                    candidate = candidate.lstrip()[4:]
+        match = re.search(r"\{.*\}", candidate, re.DOTALL)
+        if not match:
+            return None
+        try:
+            data = json.loads(match.group(0))
+        except json.JSONDecodeError:
+            return None
+        return data if isinstance(data, dict) and "tool" in data else None
+
+    # ------------------------------------------------------------------ narration
+    @staticmethod
+    def _scope_line(tool_data: Dict[str, Any]) -> str:
+        facts = tool_data.get("facts", []) or []
+        primary = next((f for f in facts if f.get("role") == "primary"), facts[0] if facts else {})
+        dims = primary.get("dimensions") or {}
+        parts: List[str] = []
+        sector, period = dims.get("sector"), dims.get("period")
+        if sector:
+            label = str(sector).title()
+            if str(sector).lower() == "energy":
+                label += " (Renewables + Powerline)"
+            parts.append(f"sector: {label}")
+        if period:
+            parts.append(f"period: {period}")
+        as_of = (tool_data.get("audit") or {}).get("as_of_date")
+        if as_of:
+            parts.append(f"data as of {as_of}")
+        return "; ".join(parts) or "whole company, all periods"
+
+    @staticmethod
+    def _facts_block(tool_data: Dict[str, Any]) -> str:
+        lines = []
+        for f in tool_data.get("facts", []) or []:
+            role = f.get("role", "support")
+            tag = {"primary": " [MAIN ANSWER]", "caveat": " [CAVEAT]"}.get(role, "")
+            lines.append(f"- [[{f.get('id', '')}]] {f.get('label', '')} = {f.get('display', '')}{tag}")
+        return "\n".join(lines) or "No facts were computed."
 
     async def narrate_tool_result(
         self,
         anonymized_query: str,
         tool_name: str,
         tool_data: Dict[str, Any],
+        usage: Optional[Dict[str, Any]] = None,
     ) -> str:
-        """
-        Synthesizes tool output into executive narrative using numbers-by-reference.
-        Falls back through model chain to local deterministic template.
-        """
-        # Format facts summary for narrator prompt
-        facts_summary = []
-        for f in tool_data.get("facts", []):
-            fid = f.get("id", "")
-            label = f.get("label", "")
-            disp = f.get("display", "")
-            role = f.get("role", "support")
-            caveat = f", Caveat: {f.get('caveat_codes')}" if f.get("caveat_codes") else ""
-            priority = " *(PRIMARY FACT - CITE IN FIRST SENTENCE)*" if role == "primary" or f.get("must_mention") else ""
-            facts_summary.append(f"- [[{fid}]]: {label} = {disp}{priority}{caveat}")
-
-        dq_warnings = []
-        for d in tool_data.get("dq", []):
-            dq_warnings.append(f"- [{d.get('code')}]: {d.get('rule_name')} — {d.get('description')}")
-
-        facts_block = "\n".join(facts_summary) if facts_summary else "No explicit facts block provided."
-        dq_block = "\n".join(dq_warnings) if dq_warnings else "No data quality anomalies flagged."
-
+        """Write the answer in plain, friendly English from computed facts. Returns "" if the LLM is unavailable."""
+        dq_lines = [
+            f"- {d.get('rule_name')}: {d.get('description')}" for d in (tool_data.get("dq") or [])[:4]
+        ]
         prompt = (
-            f"User Question: {anonymized_query}\n\n"
-            f"Tool Executed: {tool_name}\n\n"
-            f"AVAILABLE DETERMINISTIC FACTS (CITE AS [[F#]]):\n{facts_block}\n\n"
-            f"DATA QUALITY ANOMALIES & CAVEATS:\n{dq_block}\n\n"
-            f"CANONICAL FACT TEMPLATE:\n{tool_data.get('template', '')}\n\n"
-            f"INSTRUCTIONS:\n"
-            f"1. In your VERY FIRST SENTENCE, directly answer the user's question, naming the specific entities/filters (e.g. sector, period) and citing the primary fact [[F#]].\n"
-            f"2. Cite all numbers using [[F#]] reference tokens ONLY. Never perform mental math or invent ungrounded numbers.\n"
-            f"3. Follow the executive response structure."
+            f"The user asked: {anonymized_query}\n\n"
+            f"Scope of these numbers: {self._scope_line(tool_data)}\n\n"
+            f"Computed facts (cite them only as [[F#]]):\n{self._facts_block(tool_data)}\n\n"
+            f"Data-quality notes that may affect how to read the numbers:\n"
+            f"{chr(10).join(dq_lines) if dq_lines else '- none flagged'}\n\n"
+            "Answer the user's question directly and conversationally, following your instructions."
         )
-
-        if self.client and settings.LLM_MODE != "off":
-            acquired = await self.limiter.acquire(1.0, timeout=5.0)
-            if acquired:
-                models_to_try = [self.primary_model] + [m for m in self.FALLBACK_MODELS if m != self.primary_model]
-                for model_name in models_to_try:
-                    try:
-                        resp = await self.client.chat.completions.create(
-                            model=model_name,
-                            messages=[
-                                {"role": "system", "content": self._narrator_prompt},
-                                {"role": "user", "content": prompt},
-                            ],
-                            temperature=0.0,
-                            max_tokens=1500,
-                        )
-                        msg = resp.choices[0].message
-                        text = (msg.content or "").strip()
-                        if not text and getattr(msg, "reasoning_content", None):
-                            text = (msg.reasoning_content or "").strip()
-                        if text:
-                            return text
-                    except Exception as e:
-                        logger.warning(f"Narrator call failed on model {model_name}: {e}. Trying fallback.")
-                        continue
-
-        # Degraded fallback: Return fact-substituted template with executive sections
-        return self._synthesize_local(tool_name, tool_data)
+        text = await self._chat(self._narrator_prompt, prompt, self.NARRATE_MAX_TOKENS, 0.3, usage)
+        return text or ""
 
     async def repair_narration(
         self,
@@ -214,112 +226,54 @@ class LLMClient:
         draft_prose: str,
         offending_spans: List[str],
         tool_data: Dict[str, Any],
+        usage: Optional[Dict[str, Any]] = None,
     ) -> Optional[str]:
-        """
-        Executes a single targeted repair call when verifier detects ungrounded numerical claims.
-        Provides the model with the exact offending spans and demands grounded replacement citing [[F#]].
-        """
-        if not self.client or settings.LLM_MODE == "off":
-            return None
-
-        acquired = await self.limiter.acquire(1.0, timeout=5.0)
-        if not acquired:
-            return None
-
-        facts_summary = []
-        for f in tool_data.get("facts", []):
-            fid = f.get("id", "")
-            label = f.get("label", "")
-            disp = f.get("display", "")
-            role = f.get("role", "support")
-            priority = " *(PRIMARY FACT)*" if role == "primary" or f.get("must_mention") else ""
-            facts_summary.append(f"- [[{fid}]]: {label} = {disp}{priority}")
-
-        facts_block = "\n".join(facts_summary) if facts_summary else "No explicit facts."
-        offending_block = "\n".join([f"- '{s}'" for s in offending_spans]) if offending_spans else "None specified."
-
+        """One targeted rewrite when the verifier found numbers that are not backed by a fact."""
+        offending = "\n".join(f"- '{s}'" for s in offending_spans) or "- (none listed)"
         prompt = (
-            f"User Question: {anonymized_query}\n\n"
-            f"PREVIOUS DRAFT WITH UNGROUNDED NUMERICAL CLAIMS:\n{draft_prose}\n\n"
-            f"OFFENDING UNGROUNDED SPANS DETECTED BY VERIFIER:\n{offending_block}\n\n"
-            f"AVAILABLE DETERMINISTIC FACTS (CITE ONLY AS [[F#]]):\n{facts_block}\n\n"
-            f"REPAIR INSTRUCTIONS:\n"
-            f"1. Directly answer the question in the very first sentence, citing the primary fact [[F#]].\n"
-            f"2. Fix or remove every offending ungrounded number. Do NOT perform mental math or invent digits.\n"
-            f"3. Every numeric quantity in the response must cite an available [[F#]] reference token.\n"
-            f"4. Provide the revised executive narrative."
+            f"The user asked: {anonymized_query}\n\n"
+            f"Scope of these numbers: {self._scope_line(tool_data)}\n\n"
+            f"Computed facts (cite them only as [[F#]]):\n{self._facts_block(tool_data)}\n\n"
+            f"Your previous draft:\n{draft_prose}\n\n"
+            f"These parts of it contained numbers that are not backed by a fact:\n{offending}\n\n"
+            "Rewrite the answer so every number is a [[F#]] reference, keeping the same friendly, direct tone. "
+            "Remove any claim you cannot support with a fact."
         )
+        return await self._chat(self._narrator_prompt, prompt, self.NARRATE_MAX_TOKENS, 0.2, usage)
 
-        models_to_try = [self.primary_model] + [m for m in self.FALLBACK_MODELS if m != self.primary_model]
-        for model_name in models_to_try:
-            try:
-                resp = await self.client.chat.completions.create(
-                    model=model_name,
-                    messages=[
-                        {"role": "system", "content": self._narrator_prompt},
-                        {"role": "user", "content": prompt},
-                    ],
-                    temperature=0.0,
-                    max_tokens=1500,
-                )
-                msg = resp.choices[0].message
-                text = (msg.content or "").strip()
-                if not text and getattr(msg, "reasoning_content", None):
-                    text = (msg.reasoning_content or "").strip()
-                if text:
-                    return text
-            except Exception as e:
-                logger.warning(f"Repair call failed on model {model_name}: {e}")
-                continue
-
-        return None
-
+    # ------------------------------------------------------------------ honest fallback
     def _synthesize_local(self, tool_name: str, tool_data: Dict[str, Any]) -> str:
         """
-        Local deterministic synthesizer when offline, rate-limited, or degraded.
-        Guarantees 100% fact grounding and zero hallucination.
+        Used only when the AI writer is unavailable. Plain summary of the computed figures, no boilerplate advice.
         """
-        template = tool_data.get("template", "")
-        facts = tool_data.get("facts", [])
+        facts = [f for f in (tool_data.get("facts") or []) if isinstance(f, dict)]
+        by_id = {f.get("id"): f.get("display") for f in facts}
+        template = tool_data.get("template", "") or ""
+        for fid, disp in by_id.items():
+            template = template.replace(f"[[{fid}]]", str(disp))
 
-        # Fact lookup
-        facts_map = {f.get("id"): f.get("display") for f in facts if isinstance(f, dict)}
+        scope = self._scope_line(tool_data)
+        lines: List[str] = []
+        lines.append(template.strip() or "Here are the figures I computed.")
+        lines.append(f"(Scope: {scope}.)")
 
-        # Substitute [[F#]] in template if present
-        rendered_template = template
-        for fid, disp in facts_map.items():
-            rendered_template = rendered_template.replace(f"[[{fid}]]", str(disp))
+        support = [f for f in facts if f.get("role") == "support"][:5]
+        if support:
+            lines.append("What's behind it:\n" + "\n".join(f"- {f['label']}: {f['display']}" for f in support))
 
-        facts_bullets = []
-        for f in facts:
-            if isinstance(f, dict):
-                fid = f.get("id", "")
-                lbl = f.get("label", "")
-                disp = f.get("display", "")
-                must = " *(Priority)*" if f.get("must_mention") else ""
-                facts_bullets.append(f"- **{lbl}**: {disp}{must}")
+        caveats = [f for f in facts if f.get("role") == "caveat" and str(f.get("value") or 0) not in ("0", "0.0")]
+        dq = (tool_data.get("dq") or [])[:3]
+        notes = [f"- {f['label']}: {f['display']}" for f in caveats] + [f"- {d.get('description')}" for d in dq]
+        if notes:
+            lines.append("Worth knowing:\n" + "\n".join(notes))
 
-        bullets_str = "\n".join(facts_bullets)
-
-        dq_str = ""
-        if tool_data.get("dq"):
-            items = [f"- **{d.get('code')} ({d.get('rule_name')})**: {d.get('description')}" for d in tool_data.get("dq", [])]
-            dq_str = f"\n\n#### ⚠️ Data Quality & Governance Caveats\n" + "\n".join(items)
-
-        return (
-            f"### 🎯 Executive Intelligence Summary\n\n"
-            f"{rendered_template}\n\n"
-            f"#### 📊 Ground Truth Fact Verification\n"
-            f"{bullets_str}"
-            f"{dq_str}\n\n"
-            f"#### 💡 Recommended Next Actions\n"
-            f"- Review corresponding pipeline stages or work order statuses in monday.com.\n"
-            f"- Address any flagged billing status or credit balance records to optimize working capital."
-        )
+        lines.append("(The AI writer isn't available right now, so this is a plain summary of the computed figures.)")
+        return "\n\n".join(lines)
 
     # Legacy compatibility wrapper
     async def generate_response(self, user_query: str, tool_name: str, tool_data: Dict[str, Any]) -> str:
-        return await self.narrate_tool_result(user_query, tool_name, tool_data)
+        text = await self.narrate_tool_result(user_query, tool_name, tool_data)
+        return text or self._synthesize_local(tool_name, tool_data)
 
 
 llm_client = LLMClient()

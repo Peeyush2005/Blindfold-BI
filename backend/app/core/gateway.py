@@ -23,7 +23,9 @@ class BlindfoldGatewayService:
     def init_catalog(self):
         """Loads all real entity identifiers from DuckDB into token catalog."""
         try:
-            duckdb_store.initialize()
+            if not duckdb_store.initialized:
+                logger.info("Blindfold Gateway catalog deferred: no data loaded yet.")
+                return
 
             # Deals catalog
             d_rows, _, _ = duckdb_store.query(

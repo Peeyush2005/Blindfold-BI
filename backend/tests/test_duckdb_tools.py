@@ -57,6 +57,14 @@ def test_executive_brief():
     assert "wins" in result
     assert "risks" in result
     assert "recommendations" in result
-    assert "deltas" in result
-    assert len(result["wins"]) >= 3
-    assert len(result["risks"]) >= 3
+    assert "deltas" in result  # kept for backwards compatibility; empty until snapshot history is stored
+    assert len(result["wins"]) >= 1
+    assert len(result["risks"]) >= 1
+    # every win/risk/recommendation must be derived text, never one of the old fixed strings
+    frozen_strings = [
+        "Contracted order book of ₹21.16 Cr demonstrates robust core market demand",
+        "₹3.63 Cr in outstanding net receivables requires active collection follow-up",
+        "Trigger immediate billing on 17 completed-unbilled work orders to recover ₹1.46 Cr",
+    ]
+    for s in result["wins"] + result["risks"] + result["recommendations"]:
+        assert s not in frozen_strings

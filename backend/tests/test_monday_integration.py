@@ -8,47 +8,35 @@ from app.data.monday_client import MondayClient, WriteForbiddenError, MutationFo
 client = TestClient(app)
 
 
-def test_monday_meta_source_endpoint(monkeypatch):
-    """Validates GET /api/v1/meta/source returns connection status, row counts, and display badge with no secrets."""
-    # Test with monday configured
+def test_monday_meta_source_endpoint_is_truthful(monkeypatch):
+    """A token string alone must NOT be reported as a live monday.com connection."""
+    # Token set but no board IDs and no reachable monday.com: the app must not claim to be connected.
     monkeypatch.setattr(settings, "MONDAY_API_TOKEN", "mock_monday_token")
     response = client.get("/api/v1/meta/source")
     assert response.status_code == 200
     data = response.json()
-    assert data["connected"] is True
-    assert data["source"] == "monday.com"
-    assert data["as_of_date"] == "15 Jan 2026"
-    assert data["deals_count"] == 332
-    assert data["work_orders_count"] == 176
-    assert "monday.com · synced" in data["display_badge"]
-    assert "as of 15 Jan 2026" in data["display_badge"]
+    assert data["connected"] is False
+    assert data["source"] != "monday.com"
+    assert "monday.com · synced" not in data["display_badge"]
     # Ensure no tokens or secrets are exposed
     assert "token" not in data
     assert "secret" not in data
     assert "key" not in data
-
-    # Test with monday unconfigured (snapshot fallback)
-    monkeypatch.setattr(settings, "MONDAY_API_TOKEN", "")
-    response_snap = client.get("/api/v1/meta/source")
-    assert response_snap.status_code == 200
-    data_snap = response_snap.json()
-    assert data_snap["source"] == "snapshot"
-    assert "Snapshot · synced" in data_snap["display_badge"]
+    assert "mock_monday_token" not in response.text
 
 
 def test_monday_data_refresh_endpoint_security():
-    """POST /api/v1/data/refresh must be protected with X-API-Key."""
-    # Without key -> 401
+    """POST /api/v1/data/refresh must be protected with X-API-Key and must report the real outcome."""
     res_unauth = client.post("/api/v1/data/refresh")
     assert res_unauth.status_code == 401
 
-    # With valid key -> 200
     res_auth = client.post("/api/v1/data/refresh", headers={"X-API-Key": settings.API_KEY})
     assert res_auth.status_code == 200
     data = res_auth.json()
-    assert data["status"] == "success"
-    assert data["details"]["deals_count"] == 332
-    assert data["details"]["work_orders_count"] == 176
+    # In tests monday.com is not configured, so the honest answer is "failed" with the reason, never "success".
+    assert data["status"] == "failed"
+    assert "not configured" in data["message"] or "monday" in data["message"].lower()
+    assert "stats" not in data["details"]
 
 
 def test_removed_write_and_config_routes_return_404():
@@ -61,12 +49,16 @@ def test_removed_write_and_config_routes_return_404():
     assert client.post("/api/data/refresh").status_code == 404
 
 
-def test_monday_client_headers():
+def test_monday_client_headers(monkeypatch):
+    from app.data import monday_client as mc
     m_client = MondayClient(api_token="test_token_12345")
+    monkeypatch.setattr(mc, "API_VERSION", "")
     headers = m_client._get_headers()
     assert headers["Authorization"] == "test_token_12345"
-    assert headers["API-Version"] == "2024-01"
+    assert "API-Version" not in headers  # unset = monday uses its current version
     assert headers["Content-Type"] == "application/json"
+    monkeypatch.setattr(mc, "API_VERSION", "2026-04")
+    assert m_client._get_headers()["API-Version"] == "2026-04"
 
 
 @pytest.mark.asyncio

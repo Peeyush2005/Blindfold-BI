@@ -18,6 +18,11 @@ from app.data.normalize.common import (
 )
 
 
+# Closure-probability weights used for weighted pipeline. Exposed so the API reports exactly what the maths uses.
+PROB_WEIGHTS = {"High": 0.8, "Medium": 0.5, "Low": 0.2}
+DEFAULT_PROB_WEIGHT = 0.3  # deals with no probability recorded
+
+
 def normalize_deals(source: Union[Path, str, pd.DataFrame], as_of_date: pd.Timestamp = DEFAULT_AS_OF_DATE) -> pd.DataFrame:
     """
     Transforms raw Deal funnel Data sheet or raw DataFrame into standardized analytical DataFrame.
@@ -130,8 +135,7 @@ def normalize_deals(source: Union[Path, str, pd.DataFrame], as_of_date: pd.Times
     df_clean["close_date"] = df_clean["close_date_actual"]
 
     # Probability weights
-    prob_weights = {"High": 0.8, "Medium": 0.5, "Low": 0.2}
-    df_clean["prob_weight"] = df_clean["closure_probability"].map(prob_weights).fillna(0.3)
+    df_clean["prob_weight"] = df_clean["closure_probability"].map(PROB_WEIGHTS).fillna(DEFAULT_PROB_WEIGHT)
     df_clean["weighted_deal_value"] = df_clean["deal_value"] * df_clean["prob_weight"]
 
     # Fiscal Year & Quarter

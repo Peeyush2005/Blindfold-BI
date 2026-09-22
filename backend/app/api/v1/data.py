@@ -25,11 +25,13 @@ router = APIRouter(prefix="/data", tags=["Data Sync v1"])
     },
 )
 async def refresh_data_endpoint():
-    db.init_db(force_refresh=True)
-    orchestrator.init_catalog()
-    status = adapter.get_status()
+    status = await adapter.refresh(force=True)
+    ok = bool(status.get("connected"))
     return {
-        "status": "success",
-        "message": "Data snapshot refreshed into DuckDB in read-only mode.",
-        "details": status,
+        "status": "success" if ok else "failed",
+        "message": (
+            "Re-read both boards from monday.com (read-only)."
+            if ok else f"Refresh did not reach monday.com: {status.get('error')}"
+        ),
+        "details": {k: v for k, v in status.items() if k != "stats"},
     }

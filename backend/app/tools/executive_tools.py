@@ -4,6 +4,7 @@ Pure DuckDB execution with deterministic facts, PII masking, and ECharts specs.
 """
 
 from typing import Optional, Dict, Any, List
+from app.config import settings
 from app.data.duckdb_store import duckdb_store
 from app.contracts import (
     Fact,
@@ -557,55 +558,69 @@ def list_capabilities() -> ToolResult:
     )
 
 
-# Backwards compatibility wrapper
+# Backwards compatibility wrapper for MCP clients (kept for existing integrations).
+# Everything below is computed from the live tool results for the given period; nothing is a fixed
+# narrative string, so it reflects whatever monday.com actually returns.
 def get_executive_brief(period: Optional[str] = "FY25-26") -> Dict[str, Any]:
     res = leadership_brief(period=period)
     pipe_res = pipeline_summary(period=period)
     rev_res = revenue_ladder(period=period)
     wo_res = workorder_health(period=period)
+    dq_res = data_quality_report()
+
+    def get(facts, metric, default=0.0):
+        return next((f.value for f in facts if f.metric == metric), default)
 
     kpis = {
-        "pipeline_value": next((f.value for f in pipe_res.facts if f.metric == "open_pipeline_value"), 0.0),
-        "open_deals": next((f.value for f in pipe_res.facts if f.metric == "open_deals_count"), 0),
-        "contracted_amount": next((f.value for f in rev_res.facts if f.metric == "wo_contracted_value"), 0.0),
-        "billed_amount": next((f.value for f in rev_res.facts if f.metric == "wo_billed_value"), 0.0),
-        "collected_amount": next((f.value for f in rev_res.facts if f.metric == "wo_collected_value"), 0.0),
-        "receivables": next((f.value for f in rev_res.facts if f.metric == "wo_receivable_value"), 0.0),
-        "realization_rate": next((f.value for f in rev_res.facts if f.metric == "realization_rate_pct"), 0.0),
-        "collection_efficiency": 71.36,
+        "pipeline_value": get(pipe_res.facts, "open_pipeline_value"),
+        "open_deals": get(pipe_res.facts, "open_deals_count"),
+        "contracted_amount": get(rev_res.facts, "wo_contracted_value"),
+        "billed_amount": get(rev_res.facts, "wo_billed_value"),
+        "collected_amount": get(rev_res.facts, "wo_collected_value"),
+        "receivables": get(rev_res.facts, "wo_receivable_value"),
+        "realization_rate": get(rev_res.facts, "realization_rate_pct"),
+        "collection_efficiency": (
+            round(get(rev_res.facts, "wo_collected_value") / get(rev_res.facts, "wo_billed_value") * 100, 2)
+            if get(rev_res.facts, "wo_billed_value") else 0.0
+        ),
     }
+
+    tender_share = get(pipe_res.facts, "tender_outlier_share_pct")
+    unbilled_val = get(rev_res.facts, "unbilled_backlog")
+    delayed_orders = get(wo_res.facts, "delayed_work_orders_count")
+    high_dq = get(dq_res.facts, "high_severity_dq_count")
 
     wins = [
-        "Contracted order book of ₹21.16 Cr demonstrates robust core market demand",
-        "Mining sector continues strong operational conversion with healthy realization",
-        "Cash collection discipline maintains ₹9.04 Cr cash receipts across closed projects",
+        f"Order book of {format_inr(kpis['contracted_amount'])} across active work orders",
+        f"{format_inr(kpis['collected_amount'])} collected against {format_inr(kpis['billed_amount'])} billed "
+        f"({kpis['collection_efficiency']:.1f}% collection efficiency)",
     ]
+    risks = [f"{format_inr(kpis['receivables'])} in outstanding receivables"]
+    if unbilled_val:
+        risks.append(f"{format_inr(unbilled_val)} of completed or ongoing work not yet billed")
+    if tender_share:
+        risks.append(f"Tender deals account for {tender_share:.1f}% of open pipeline value - concentration risk")
+    if delayed_orders:
+        risks.append(f"{int(delayed_orders)} work orders are past their expected date and not marked complete")
 
-    risks = [
-        "₹3.63 Cr in outstanding net receivables requires active collection follow-up",
-        "₹10.43 Cr unbilled backlog with completed projects awaiting billing trigger",
-        "Pipeline concentration risk with Tender accounting for 77.3% of open deal value",
-    ]
-
-    recommendations = [
-        "Trigger immediate billing on 17 completed-unbilled work orders to recover ₹1.46 Cr",
-        "Resolve 12 'Update Required' work order billing status anomalies",
-        "Establish formal foreign-key alignment between CRM deals and ops work orders",
-    ]
-
-    deltas = {
-        "pipeline_change_pct": 5.2,
-        "revenue_change_pct": 8.4,
-        "collection_rate_delta": 1.5,
-    }
+    recommendations = []
+    if unbilled_val:
+        recommendations.append(f"Bill the {format_inr(unbilled_val)} of unbilled completed/ongoing work")
+    if high_dq:
+        recommendations.append(f"Address {int(high_dq)} high-severity data quality issues (see data_quality_report)")
+    recommendations.append("No verified key links Deals to Work Orders in this data - reconcile by sector, not by deal")
 
     return {
         "period": period,
+        "as_of": settings.AS_OF_DATE,
         "kpis": kpis,
         "wins": wins,
         "risks": risks,
         "recommendations": recommendations,
-        "deltas": deltas,
+        # No snapshot history is stored yet, so a period-over-period delta cannot be computed honestly.
+        # The key is kept for backwards compatibility with existing MCP clients.
+        "deltas": {},
+        "deltas_note": "Period-over-period deltas require stored snapshot history, which is not yet kept.",
         "facts": [f.model_dump() for f in res.facts],
         "tables": [t.model_dump() for t in res.tables],
         "audit": dict(res.audit) if res.audit else {},

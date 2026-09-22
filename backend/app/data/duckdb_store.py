@@ -216,14 +216,14 @@ class DuckDBStore:
         """)
 
         self.initialized = True
-        logger.info("DuckDBStore analytical engine initialized with 332 clean deals and 176 work orders.")
+        logger.info(f"DuckDBStore analytical engine initialized with {len(self.deals_df)} clean deals and {len(self.wo_df)} work orders.")
 
     def query(self, sql: str, params: Optional[List[Any]] = None) -> Tuple[List[Dict[str, Any]], float, int]:
         """
         Executes parameterized SQL query and returns (records, duration_ms, row_count).
         """
         if not self.initialized:
-            self.initialize()
+            self.initialize()  # dev/tests fall back to local fixtures; raises FileNotFoundError in production images
 
         start_time = time.time()
         if params:
