@@ -195,15 +195,14 @@ class DataAdapter:
         return self.deals_df is not None and self.wo_df is not None
 
     def _board_ids(self) -> Tuple[str, str]:
-        return (
-            (settings.MONDAY_DEALS_BOARD_ID or self.client.deals_board_id or "").strip(),
-            (settings.MONDAY_WO_BOARD_ID or self.client.wo_board_id or "").strip(),
-        )
+        deals = (self.client.deals_board_id if self.client and self.client.deals_board_id else settings.MONDAY_DEALS_BOARD_ID) or ""
+        wo = (self.client.wo_board_id if self.client and self.client.wo_board_id else settings.MONDAY_WO_BOARD_ID) or ""
+        return (str(deals).strip(), str(wo).strip())
 
     @property
     def monday_configured(self) -> bool:
         deals_id, wo_id = self._board_ids()
-        token = (settings.MONDAY_API_TOKEN or self.client.api_token or "").strip()
+        token = ((self.client.api_token if self.client and self.client.api_token else settings.MONDAY_API_TOKEN) or "").strip()
         # An injected client (tests) may use a transport instead of a token.
         has_credentials = bool(token) or (self._client is not None and self._client.transport is not None)
         return bool(has_credentials and deals_id and wo_id)

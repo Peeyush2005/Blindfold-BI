@@ -29,9 +29,9 @@ class Settings(BaseSettings):
     # LLM Settings (NVIDIA NIM Free Tier)
     NVIDIA_API_KEY: str = os.getenv("NVIDIA_API_KEY", "")
     NVIDIA_BASE_URL: str = os.getenv("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1")
-    NVIDIA_MODEL: str = os.getenv("NVIDIA_MODEL", "openai/gpt-oss-120b")
+    NVIDIA_MODEL: str = os.getenv("NVIDIA_MODEL", "meta/llama-3.2-11b-vision-instruct")
     # Optional comma-separated fallback chain, tried in order after NVIDIA_MODEL. IDs must exist in your NVIDIA catalog.
-    NVIDIA_FALLBACK_MODELS: str = os.getenv("NVIDIA_FALLBACK_MODELS", "openai/gpt-oss-20b")
+    NVIDIA_FALLBACK_MODELS: str = os.getenv("NVIDIA_FALLBACK_MODELS", "meta/llama-3.2-90b-vision-instruct")
 
     # Monday.com API Settings (Optional live connector)
     MONDAY_API_TOKEN: str = os.getenv("MONDAY_API_TOKEN", "")
