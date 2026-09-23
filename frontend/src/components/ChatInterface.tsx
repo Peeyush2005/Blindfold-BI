@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Send, AlertCircle, Sparkles } from 'lucide-react';
+import { Send, AlertCircle } from 'lucide-react';
 import { apiUrl } from '../apiConfig';
 import type {
   AnswerPayload,
@@ -415,23 +415,34 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       {/* Messages Scroll Area or Empty State */}
       <div className="flex-1 overflow-y-auto py-4 space-y-6">
         {messages.length === 0 ? (
-          <div className="h-full flex flex-col justify-center items-center text-center px-2 py-6">
-            <div className="w-10 h-10 rounded-md bg-slate-800 border border-slate-700 flex items-center justify-center text-sky-400 mb-3">
-              <Sparkles className="w-5 h-5" />
+          <div className="h-full flex flex-col justify-center px-2 py-6">
+            {/* Hallmark Workbench Hero */}
+            <div className="max-w-2xl mx-auto w-full">
+              <div className="flex items-center space-x-2 mb-3">
+                <div className="w-2 h-2 rounded-full bg-sky-400" />
+                <span className="text-[10px] font-mono uppercase tracking-[0.18em] text-sky-400">
+                  Analytical Console · Operational Readiness = Nominal
+                </span>
+              </div>
+              <h1 className="text-3xl sm:text-4xl font-semibold text-slate-100 tracking-tight font-display">
+                Skylark Business
+                <span className="text-slate-500"> · Intelligence</span>
+              </h1>
+              <p className="text-[13px] text-slate-400 mt-2 max-w-md font-mono">
+                Ask a question in plain language. Every figure is computed
+                deterministically in DuckDB and verified before it reaches this screen.
+              </p>
             </div>
-            <h1 className="text-xl font-medium text-slate-100 tracking-tight">
-              Skylark Business Intelligence
-            </h1>
-            <p className="text-xs text-slate-400 mt-1.5 max-w-md">
-              Ask any question about pipeline, revenue, work orders, and data hygiene.
-            </p>
 
-            {/* Starter Suggestion Chips Grouped under Pipeline, Revenue, Operations, Data quality */}
-            <div className="mt-6 w-full space-y-4 text-left">
-              {STARTER_CATEGORIES.map((cat) => (
-                <div key={cat.title}>
-                  <div className="text-[11px] font-semibold text-slate-400 mb-1.5 uppercase tracking-wider px-1">
-                    {cat.title}
+            {/* Instrument Register: Starter Command Deck */}
+            <div className="mt-8 max-w-2xl mx-auto w-full space-y-5">
+              {STARTER_CATEGORIES.map((cat, catIdx) => (
+                <div key={cat.title} className={catIdx > 0 ? 'pt-5 border-t hairline-rule' : ''}>
+                  <div className="flex items-center justify-between mb-2.5">
+                    <div className="text-[11px] font-mono uppercase tracking-[0.16em] text-slate-500">
+                      {cat.title}
+                    </div>
+                    <div className="text-[10px] font-mono text-slate-600">{cat.chips.length} cmds</div>
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     {cat.chips.map((chip, idx) => (
@@ -440,12 +451,17 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                         type="button"
                         onClick={() => handleSendMessage(chip.query)}
                         disabled={isLoading}
-                        className="p-2.5 text-left rounded-md border border-slate-800/90 bg-slate-900/60 hover:bg-slate-800/80 hover:border-slate-700 text-xs text-slate-300 hover:text-white transition-colors cursor-pointer group"
+                        className="p-3 text-left rounded border border-slate-800 bg-[#0a0f1b]/80 hover:border-sky-500/60 hover:bg-sky-500/[0.06] transition-all cursor-pointer group"
                       >
-                        <div className="font-medium text-slate-200 group-hover:text-sky-300 transition-colors">
-                          {chip.label}
+                        <div className="flex items-center justify-between">
+                          <div className="text-[12px] font-medium text-slate-200 group-hover:text-sky-300 transition-colors">
+                            {chip.label}
+                          </div>
+                          <span className="text-slate-600 group-hover:text-sky-400 font-mono text-[11px] transition-colors">
+                            {'>_'}
+                          </span>
                         </div>
-                        <div className="text-[11px] text-slate-400 mt-0.5 line-clamp-1">
+                        <div className="text-[11px] font-mono text-slate-500 mt-1 line-clamp-1">
                           {chip.desc}
                         </div>
                       </button>
@@ -459,9 +475,19 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
           messages.map((msg) => (
             <div key={msg.id} className="space-y-2">
               {msg.sender === 'user' ? (
-                <div className="flex justify-end">
-                  <div className="max-w-xl px-4 py-2.5 rounded-md bg-slate-800 text-slate-100 text-sm border border-slate-700">
-                    {msg.question}
+                <div className="flex justify-end my-3">
+                  <div className="max-w-xl p-3 rounded border border-slate-800 bg-[#0e1626] text-slate-100 text-sm shadow-xs">
+                    <div className="flex items-center space-x-2 mb-1">
+                      <span className="text-[10px] font-mono uppercase tracking-widest text-sky-400">
+                        ANALYST QUERY
+                      </span>
+                      <span className="text-[10px] font-mono text-slate-500">
+                        {msg.timestamp}
+                      </span>
+                    </div>
+                    <div className="font-sans leading-relaxed text-slate-200">
+                      {msg.question}
+                    </div>
                   </div>
                 </div>
               ) : (
@@ -527,33 +553,38 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Persistent Bottom Query Input Bar */}
-      <div className="py-3 border-t border-slate-800 bg-slate-950">
+      {/* Persistent Bottom Query Input Bar (Hallmark Instrument Register) */}
+      <div className="py-3 border-t border-slate-800 bg-[#080c14]/95 backdrop-blur-md">
         <form
           onSubmit={(e) => {
             e.preventDefault();
             handleSendMessage(inputQuery);
           }}
-          className="flex items-center space-x-2"
+          className="flex items-center space-x-2.5"
         >
-          <input
-            ref={inputRef}
-            type="text"
-            value={inputQuery}
-            onChange={(e) => setInputQuery(e.target.value)}
-            placeholder="Ask a question about pipeline, revenue, work orders, or data quality..."
-            disabled={isLoading}
-            className="flex-1 px-3.5 py-2.5 rounded-md bg-slate-900 border border-slate-800 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-sky-500 transition-colors disabled:opacity-50"
-            aria-label="Ask analytical query"
-          />
+          <div className="relative flex-1 flex items-center">
+            <span className="absolute left-3 font-mono text-slate-500 text-xs select-none">
+              &gt;
+            </span>
+            <input
+              ref={inputRef}
+              type="text"
+              value={inputQuery}
+              onChange={(e) => setInputQuery(e.target.value)}
+              placeholder="Ask a question about pipeline, revenue, work orders, or data quality..."
+              disabled={isLoading}
+              className="w-full pl-7 pr-3.5 py-2.5 rounded border border-slate-800 bg-[#0d131f] text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-sky-500/70 focus:ring-1 focus:ring-sky-500/30 transition-all font-sans disabled:opacity-50"
+              aria-label="Ask analytical query"
+            />
+          </div>
           <button
             type="submit"
             disabled={isLoading || !inputQuery.trim()}
-            className="px-4 py-2.5 rounded-md bg-sky-600 hover:bg-sky-500 text-white text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer flex items-center space-x-1.5"
+            className="px-3.5 py-2.5 rounded bg-sky-600 hover:bg-sky-500 text-white text-xs font-mono font-medium transition-all disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer flex items-center space-x-1.5 shadow-xs"
             aria-label="Send query"
           >
-            <span>Ask</span>
-            <Send className="w-3.5 h-3.5" />
+            <span>RUN</span>
+            <Send className="w-3 h-3" />
           </button>
         </form>
       </div>
