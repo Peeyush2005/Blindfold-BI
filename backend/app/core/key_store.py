@@ -41,14 +41,31 @@ class KeyStore:
     def __init__(self):
         self.pepper = settings.API_KEY_PEPPER.encode("utf-8")
         self.env = settings.ENVIRONMENT.lower()
-        self.storage_file = settings.PROJECT_ROOT / "storage" / "keys.json"
+        self._storage_writable = True
+        self.storage_file = self._resolve_storage_file()
         self._cache: Dict[str, KeyRecord] = {}
         self._cache_updated_at: float = 0.0
         self._cache_ttl: float = 60.0  # 60s cache TTL
-
-        # Ensure storage directory exists
-        self.storage_file.parent.mkdir(parents=True, exist_ok=True)
         self._load_keys()
+
+    def _resolve_storage_file(self) -> Path:
+        """Select a writable key store location, falling back to /tmp on read-only serverless hosts."""
+        candidates = (
+            [Path("/tmp/blindfold-bi/keys.json")]
+            if os.getenv("VERCEL")
+            else [
+                settings.PROJECT_ROOT / "storage" / "keys.json",
+                Path("/tmp/blindfold-bi/keys.json"),
+            ]
+        )
+        for candidate in candidates:
+            try:
+                candidate.parent.mkdir(parents=True, exist_ok=True)
+                return candidate
+            except OSError:
+                continue
+        self._storage_writable = False
+        return candidates[-1]
 
     def _hash_secret(self, secret: str) -> str:
         return hmac.new(self.pepper, secret.encode("utf-8"), hashlib.sha256).hexdigest()
@@ -68,11 +85,17 @@ class KeyStore:
 
     def _save_keys(self) -> None:
         """Persists keys from memory cache to persistent storage."""
+        if not self._storage_writable:
+            self._cache_updated_at = time.time()
+            return
         try:
             self.storage_file.parent.mkdir(parents=True, exist_ok=True)
             with open(self.storage_file, "w", encoding="utf-8") as f:
                 json.dump({k: v.model_dump() for k, v in self._cache.items()}, f, indent=2)
             self._cache_updated_at = time.time()
+        except OSError as e:
+            self._storage_writable = False
+            logger.warning(f"Key storage is read-only; keeping keys in memory only: {e}")
         except Exception as e:
             logger.error(f"Failed to save keys to storage: {e}")
 

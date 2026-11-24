@@ -1,7 +1,19 @@
+import json
 import os
+import re
 from pathlib import Path
-from typing import Optional
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from typing import Annotated, Optional
+from pydantic import field_validator, model_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+
+
+def _extract_board_id(raw: str) -> str:
+    """Accept either a numeric Monday.com board ID or a full board URL."""
+    val = (raw or "").strip()
+    if not val:
+        return ""
+    match = re.search(r"/boards/(\d+)", val)
+    return match.group(1) if match else val
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -28,13 +40,23 @@ class Settings(BaseSettings):
     # LLM Settings (NVIDIA NIM Free Tier)
     NVIDIA_API_KEY: str = os.getenv("NVIDIA_API_KEY", "")
     NVIDIA_BASE_URL: str = os.getenv("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1")
-    NVIDIA_MODEL: str = os.getenv("NVIDIA_MODEL", "openai/gpt-oss-20b")
+    NVIDIA_MODEL: str = os.getenv("NVIDIA_MODEL", "nvidia/nemotron-3.5-bolt-e4b")
 
     # Monday.com API Settings (Optional live connector)
-    MONDAY_API_TOKEN: str = os.getenv("MONDAY_API_TOKEN", "")
+    MONDAY_API_TOKEN: str = os.getenv("MONDAY_API_TOKEN", "") or os.getenv("MONDAY_API_KEY", "")
     MONDAY_API_URL: str = "https://api.monday.com/v2"
-    MONDAY_DEALS_BOARD_ID: str = os.getenv("MONDAY_DEALS_BOARD_ID", "")
-    MONDAY_WO_BOARD_ID: str = os.getenv("MONDAY_WO_BOARD_ID", "")
+    MONDAY_DEALS_BOARD_ID: str = _extract_board_id(
+        os.getenv("MONDAY_DEALS_BOARD_ID", "") or os.getenv("MONDAY_DEAL_BOARD_ID", "")
+    )
+    MONDAY_WO_BOARD_ID: str = _extract_board_id(
+        os.getenv("MONDAY_WO_BOARD_ID", "")
+        or os.getenv("MONDAY_WORK_ORDER_BOARD_ID", "")
+        or os.getenv("MONDAY_WORKORDERS_BOARD_ID", "")
+    )
+    MONDAY_DEAL_BOARD_ID: str = ""
+    MONDAY_WORK_ORDER_BOARD_ID: str = ""
+    MONDAY_WORKORDERS_BOARD_ID: str = ""
+    MONDAY_API_KEY: str = ""
     MONDAY_SIGNING_SECRET: str = os.getenv("MONDAY_SIGNING_SECRET", "")
     MONDAY_DATA_SOURCE_PRIORITY: str = os.getenv("MONDAY_DATA_SOURCE_PRIORITY", "monday_first")
     CACHE_TTL_SECONDS: int = 600  # 10 minutes
@@ -51,13 +73,42 @@ class Settings(BaseSettings):
     AZURE_STORAGE_CONTAINER: str = os.getenv("AZURE_STORAGE_CONTAINER", "blindfold-keys")
 
     # CORS
-    CORS_ORIGINS: list[str] = [
+    CORS_ORIGINS: Annotated[list[str], NoDecode] = [
         "http://localhost:3000",
         "http://localhost:5173",
         "http://127.0.0.1:3000",
         "http://127.0.0.1:5173",
         "https://mango-plant-08ea0340f.1.azurestaticapps.net",
     ]
-    CORS_ORIGIN_REGEX: Optional[str] = r"^https:\/\/.*\.azurestaticapps\.net$"
+    CORS_ORIGIN_REGEX: Optional[str] = r"^https:\/\/.*\.(azurestaticapps\.net|vercel\.app|onrender\.com)$"
+
+    @field_validator("CORS_ORIGINS", mode="before")
+    @classmethod
+    def _parse_cors_origins(cls, v):
+        if isinstance(v, str):
+            s = v.strip()
+            if not s:
+                return []
+            if s.startswith("["):
+                try:
+                    parsed = json.loads(s)
+                    if isinstance(parsed, list):
+                        return [str(x).strip() for x in parsed if str(x).strip()]
+                except json.JSONDecodeError:
+                    pass
+            return [x.strip() for x in s.split(",") if x.strip()]
+        return v
+
+    @model_validator(mode="after")
+    def _normalize_monday_settings(self):
+        if not self.MONDAY_API_TOKEN and self.MONDAY_API_KEY:
+            self.MONDAY_API_TOKEN = self.MONDAY_API_KEY
+        self.MONDAY_DEALS_BOARD_ID = _extract_board_id(
+            self.MONDAY_DEALS_BOARD_ID or self.MONDAY_DEAL_BOARD_ID
+        )
+        self.MONDAY_WO_BOARD_ID = _extract_board_id(
+            self.MONDAY_WO_BOARD_ID or self.MONDAY_WORK_ORDER_BOARD_ID or self.MONDAY_WORKORDERS_BOARD_ID
+        )
+        return self
 
 settings = Settings()

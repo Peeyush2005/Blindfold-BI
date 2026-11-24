@@ -13,6 +13,7 @@ import logging
 from typing import Dict, Any, List, Optional
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -54,12 +55,12 @@ class MondayClient:
         deals_board_id: Optional[str] = None,
         wo_board_id: Optional[str] = None,
     ):
-        self.api_token = api_token or os.getenv("MONDAY_API_TOKEN", "")
+        self.api_token = api_token if api_token is not None else (os.getenv("MONDAY_API_TOKEN", "") or settings.MONDAY_API_TOKEN)
         self.api_url = api_url
         self.daily_budget = daily_budget
         self.transport = transport
-        self.deals_board_id = deals_board_id or os.getenv("MONDAY_DEALS_BOARD_ID", "")
-        self.wo_board_id = wo_board_id or os.getenv("MONDAY_WO_BOARD_ID", "")
+        self.deals_board_id = deals_board_id if deals_board_id is not None else (os.getenv("MONDAY_DEALS_BOARD_ID", "") or settings.MONDAY_DEALS_BOARD_ID)
+        self.wo_board_id = wo_board_id if wo_board_id is not None else (os.getenv("MONDAY_WO_BOARD_ID", "") or settings.MONDAY_WO_BOARD_ID)
         self.calls_today = 0
         self.budget_reset_time = time.time() + 86400
 
@@ -180,6 +181,9 @@ class MondayClient:
                             text
                             value
                             type
+                            column {
+                                title
+                            }
                         }
                     }
                 }

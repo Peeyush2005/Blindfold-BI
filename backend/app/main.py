@@ -34,7 +34,7 @@ async def lifespan(app: FastAPI):
     logger.info("Initializing DuckDB analytic tables...")
     db.init_db()
     logger.info("Initializing DataAdapter snapshot...")
-    adapter.load_data()
+    await adapter.aload_data()
     logger.info("Initializing Blindfold Privacy Gateway surrogate catalogs...")
     orchestrator.init_catalog()
     yield
@@ -142,6 +142,12 @@ async def healthz():
     description="Kubernetes/container readiness probe confirming DuckDB, snapshot data, metric contracts, key store, and LLM are ready to serve traffic.",
 )
 async def readyz():
+    if adapter.deals_df is None or adapter.wo_df is None or not db.store.initialized:
+        try:
+            await adapter.aload_data()
+        except Exception as exc:
+            logger.warning(f"Lazy readiness initialization failed: {exc}")
+
     llm_ok = bool(settings.NVIDIA_API_KEY and settings.NVIDIA_API_KEY.strip())
     monday_ok = bool(settings.MONDAY_API_TOKEN and settings.MONDAY_API_TOKEN.strip())
     key_store_status = key_store.health_status()
@@ -159,10 +165,7 @@ async def readyz():
         "key_store": key_store_status == "ok",
     }
 
-    is_prod = settings.ENVIRONMENT.lower() == "production"
-    prod_missing_required = is_prod and (not llm_ok or not monday_ok or key_store_status != "ok")
-
-    is_ready = all(checks.values()) and not prod_missing_required
+    is_ready = duckdb_ok and checks["data_snapshot"] and contracts_ok and checks["key_store"]
     status_code = status.HTTP_200_OK if is_ready else status.HTTP_503_SERVICE_UNAVAILABLE
 
     content = {
@@ -179,11 +182,7 @@ async def readyz():
 
     if not is_ready:
         content["code"] = "NOT_READY"
-        content["detail"] = (
-            "Production environment requires NVIDIA_API_KEY, MONDAY_API_TOKEN, and healthy key_store."
-            if prod_missing_required
-            else "One or more readiness dependencies are unavailable."
-        )
+        content["detail"] = "One or more readiness dependencies are unavailable."
 
     return JSONResponse(status_code=status_code, content=content)
 

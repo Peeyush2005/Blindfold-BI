@@ -57,9 +57,9 @@ class DataAdapter:
         for item in items:
             row: Dict[str, Any] = {"Deal Name": item.get("name", "")}
             for cv in item.get("column_values", []):
-                cid = cv.get("id", "")
+                col_name = (cv.get("column") or {}).get("title") or cv.get("id", "")
                 text = cv.get("text")
-                row[cid] = text
+                row[col_name] = text if text != "" else None
             rows.append(row)
         return pd.DataFrame(rows)
 
@@ -69,9 +69,9 @@ class DataAdapter:
         for item in items:
             row: Dict[str, Any] = {"Deal name masked": item.get("name", "")}
             for cv in item.get("column_values", []):
-                cid = cv.get("id", "")
+                col_name = (cv.get("column") or {}).get("title") or cv.get("id", "")
                 text = cv.get("text")
-                row[cid] = text
+                row[col_name] = text if text != "" else None
             rows.append(row)
         return pd.DataFrame(rows)
 
@@ -170,6 +170,27 @@ class DataAdapter:
                 logger.warning("Serving stale snapshot due to refresh error.")
                 return self.deals_df, self.wo_df
             raise e
+
+    async def aload_data(self, force_refresh: bool = False) -> Tuple[pd.DataFrame, pd.DataFrame]:
+        """Async loader for lifespan/request contexts so Monday.com live fetch can run on an active event loop."""
+        now = datetime.datetime.now()
+        if not force_refresh and self.deals_df is not None and self.wo_df is not None and self.last_synced:
+            if (now - self.last_synced).total_seconds() < settings.CACHE_TTL_SECONDS:
+                return self.deals_df, self.wo_df
+
+        monday_configured = bool(settings.MONDAY_API_TOKEN and settings.MONDAY_API_TOKEN.strip())
+        if monday_configured and settings.MONDAY_DEALS_BOARD_ID and settings.MONDAY_WO_BOARD_ID:
+            live_result = await self._fetch_from_monday()
+            if live_result is not None:
+                self.deals_df, self.wo_df = live_result
+                self.source = "monday.com"
+                self.is_stale = False
+                self.last_synced = now
+                duckdb_store.initialize(deals_df=self.deals_df, wo_df=self.wo_df, force_refresh=True)
+                logger.info(f"Loaded live Monday data: {len(self.deals_df)} deals, {len(self.wo_df)} work orders.")
+                return self.deals_df, self.wo_df
+
+        return self.load_data(force_refresh=force_refresh)
 
     def get_status(self) -> Dict[str, Any]:
         """Returns current sync status, row counts, and source mode."""

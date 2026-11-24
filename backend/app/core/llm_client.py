@@ -59,7 +59,8 @@ class LLMClient:
     """
 
     FALLBACK_MODELS = [
-        "meta/muse-glimmer-30b",
+        "nvidia/nemotron-3.5-bolt-e4b",
+        "mistralai/mistral-large-4-1t-a52b",
     ]
 
     def __init__(self):

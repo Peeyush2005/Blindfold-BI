@@ -588,7 +588,7 @@ export const InfoTab: React.FC<InfoTabProps> = ({ onAskQuery }) => {
         <div className="p-4 rounded-md border border-slate-800 bg-slate-900/40 space-y-4 text-xs">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <a
-              href="/docs"
+              href={apiUrl('/docs')}
               target="_blank"
               rel="noopener noreferrer"
               className="p-3 rounded bg-slate-900/80 border border-slate-800 hover:border-slate-700 hover:bg-slate-800/80 transition-colors flex items-center justify-between group"
@@ -601,7 +601,7 @@ export const InfoTab: React.FC<InfoTabProps> = ({ onAskQuery }) => {
             </a>
 
             <a
-              href="/mcp"
+              href={apiUrl('/mcp')}
               target="_blank"
               rel="noopener noreferrer"
               className="p-3 rounded bg-slate-900/80 border border-slate-800 hover:border-slate-700 hover:bg-slate-800/80 transition-colors flex items-center justify-between group"
