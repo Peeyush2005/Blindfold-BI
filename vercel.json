@@ -5,7 +5,7 @@
   "functions": {
     "api/index.py": {
       "maxDuration": 60,
-      "excludeFiles": "{frontend/**,docs/**,evals/**,infra/**,scripts/**,.github/**,*.png,.venv*/**,node_modules/**}"
+      "excludeFiles": "{frontend/**,docs/**,evals/**,infra/**,scripts/**,.github/**,backend/scripts/**,backend/evals/**,backend/tests/*.py,backend/tests/evals/**,*.png,.venv*/**,node_modules/**}"
     }
   },
   "rewrites": [
